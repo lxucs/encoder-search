@@ -462,15 +462,14 @@ class Evaluator:
 
     save_dir: str
     dataset_path: str
-    gold_score: Optional[int]
 
     model_name: str
-    is_colbert: bool
     pooling_type: str
     normalize: bool
     query_prefix: str
     cand_prefix: str
 
+    is_colbert: bool = False
     use_simple_colbert_query: bool = False
     use_colbert_linear: bool = True
 
@@ -479,9 +478,11 @@ class Evaluator:
     mode: str = 'dense'
 
     do_rerank: bool = False
-    reranker_name: str = None
-    rerank_threshold: float = None
-    rerank_only_above: float = None
+    reranker_name: Optional[str] = None
+    rerank_threshold: Optional[float] = None
+    rerank_only_above: Optional[float] = None
+
+    gold_score: Optional[int] = None
 
     def __post_init__(self):
         assert self.mode in ('dense', 'bm25')
@@ -490,7 +491,7 @@ class Evaluator:
             assert self.query_threshold is None or self.topk is None, 'Dense search takes threshold or topk (not both)'
 
         if not self.do_rerank:
-            self.rerank_threshold = self.rerank_only_above = None
+            self.reranker_name = self.rerank_threshold = self.rerank_only_above = None
 
         if self.is_colbert:
             self.searcher = ColbertSearcher(self.save_dir, self.dataset_path, self.model_name, self.pooling_type, self.normalize, self.query_prefix, self.cand_prefix,
@@ -549,6 +550,7 @@ class Evaluator:
         if self.mode == 'dense':
             report = self.get_report(results, self.searcher.candidates)
             io_util.write(self.report_path, report)
+            print(f'Saved report to {self.report_path}')
         return results, ds2metric2score
 
     @classmethod
@@ -643,7 +645,7 @@ class Evaluator:
         return query_metric2score
 
     @classmethod
-    def get_metrics(cls, insts, gold_score, query_threshold=None, rerank_threshold=None):
+    def get_metrics(cls, insts, gold_score=None, query_threshold=None, rerank_threshold=None):
         if gold_score is None:
             print(f'Using all positives as gold')
         else:
@@ -767,42 +769,35 @@ def tune_hyperparameters(result_path, gold_score):
 
 
 def main():
-    parser = ArgumentParser('Evaluation')
-    parser.add_argument('--result_path', type=str, help='已有的结果绝对路径 (将忽略除gold_score,threshold外的其他参数)', default=None)
-    parser.add_argument('--dataset', type=str, help='数据集名字', default='ecom')
-    parser.add_argument('--gold_score', type=int, help='评测正例的score (None to use all)', default=None)
-    parser.add_argument('--model', type=str, help='模型名字或路径', default='BAAI/bge-base-zh-v1.5')
-    # parser.add_argument('--model', type=str, help='模型名字或路径', default='/Users/liyanlxu/gitrepo/pretrained/bge-m3')
-    # parser.add_argument('--model', type=str, help='模型名字或路径', default='/Users/liyanlxu/gitrepo/pretrained/multilingual-e5-base')
-    # parser.add_argument('--model', type=str, help='模型名字或路径', default='/Users/liyanlxu/gitrepo/pretrained/bge_zh_base_cls_enc_w_perm_negphrase_margin.Mar04_16-18-05')
-    parser.add_argument('--is_colbert', type=int, help='colbert model', default=0)
-    parser.add_argument('--use_simple_colbert_query', type=int, default=0)
-    parser.add_argument('--use_colbert_linear', type=int, default=1)
-    parser.add_argument('--pooling', type=str, help='cls or mean', default='cls', choices=['cls', 'mean'])
-    parser.add_argument('--normalize', type=int, help='是否normalize emb', default=1)
+    parser = ArgumentParser('Evaluate Retrieval')
+    parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', required=True)
+    parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
+    parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean'])
+    parser.add_argument('--normalize', type=int, help='Whether normalize emb', default=1)
     parser.add_argument('--query_prefix', type=str, help='query_prefix', default='')
     parser.add_argument('--cand_prefix', type=str, help='cand_prefix', default='')
-    parser.add_argument('--threshold', type=float, help='检索距离threshold', default=None)
-    parser.add_argument('--topk', type=int, help='检索topk', default=10)
-    parser.add_argument('--mode', type=str, help='dense or bm25', default='dense')
-    parser.add_argument('--do_rerank', type=int, help='Do rerank', default=0)
-    parser.add_argument('--reranker_name', type=str, help='Reranker', default='/Users/liyanlxu/gitrepo/pretrained/rerank_bge_zh_small_cls_encoder_v85_margin.Jan21_12-03-17')
-    parser.add_argument('--rerank_threshold', type=float, help='Rerank threshold', default=0.6)
-    parser.add_argument('--rerank_only_above', type=float, help='Rerank only on above-distance', default=1.175)
-
+    parser.add_argument('--is_colbert', help='Use colbert retrieval', action='store_true')
+    parser.add_argument('--use_simple_colbert_query', help='Use simple query emb for colbert', action='store_true')
+    parser.add_argument('--disable_colbert_linear', help='Disable linear layer for colbert', action='store_true')
+    parser.add_argument('--threshold', type=float, help='Search threshold', default=None)
+    parser.add_argument('--topk', type=int, help='Search topk', default=None)
+    parser.add_argument('--mode', type=str, help='Search mode', default='dense', choices=['dense', 'exact'])
+    parser.add_argument('--do_rerank', help='Do rerank', action='store_true')
+    parser.add_argument('--reranker_name', type=str, help='Reranker name or path', default=None)
+    parser.add_argument('--rerank_threshold', type=float, help='Rerank threshold', default=None)
+    parser.add_argument('--rerank_only_above', type=float, help='Rerank only on above-distance', default=None)
+    parser.add_argument('--result_path', type=str, help='Saved result path to compute metrics', default=None)
     args = parser.parse_args()
-    if not args.do_rerank:
-        args.rerank_threshold = args.rerank_only_above = None
 
     if args.result_path:
         results = io_util.read(args.result_path)
         print(f'Evaluation {len(results)} results from {args.result_path}\n')
-        Evaluator.get_metrics(results, gold_score=args.gold_score, query_threshold=args.threshold, rerank_threshold=args.rerank_threshold)
+        Evaluator.get_metrics(results, query_threshold=args.threshold, rerank_threshold=args.rerank_threshold)
     else:
-        evaluator = Evaluator('evaluation', args.dataset, args.gold_score, args.model, bool(args.is_colbert), args.pooling, bool(args.normalize), args.query_prefix, args.cand_prefix,
-                              use_simple_colbert_query=bool(args.use_simple_colbert_query), use_colbert_linear=bool(args.use_colbert_linear),
+        evaluator = Evaluator('evaluation', args.dataset, args.model, args.pooling, bool(args.normalize), args.query_prefix, args.cand_prefix,
+                              is_colbert=args.is_colbert, use_simple_colbert_query=args.use_simple_colbert_query, use_colbert_linear=not args.disable_colbert_linear,
                               query_threshold=args.threshold, topk=args.topk, mode=args.mode,
-                              do_rerank=bool(args.do_rerank), reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)
+                              do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)
         evaluator.get_results()
 
 

@@ -171,7 +171,8 @@ cython_debug/
 .pypirc
 
 .DS_Store
-dataset
+dataset/*
+!dataset/nfcorpus
 dataset_*
 !dataset_*.py
 evaluation
