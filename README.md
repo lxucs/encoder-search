@@ -1,10 +1,16 @@
 # General Encoder Retrieval Evaluation
 
+
+### Environment
+
+Install pytorch, then `pip install requirements.txt`
+
+
 ### Evaluate Retrieval
 
 `python run.py --dataset nfcorpus --model BAAI/bge-base-en-v1.5 --topk 10`
 
-- `dataset` is the dataset under [dataset](dataset)。
+- `dataset` is the dataset under [dataset](dataset)
 - Results and embeddings will be saved at the `evaluation` directory.
 
 
