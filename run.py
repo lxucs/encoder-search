@@ -13,7 +13,6 @@ from model_colbert import ColbertModel
 import torch
 import logging
 import jieba
-from rank_bm25 import BM25Okapi
 from transformers import BertModel, AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 
 
@@ -206,6 +205,7 @@ class Searcher:
 
     @cached_property
     def bm25_index(self):
+        from rank_bm25 import BM25Okapi
         overwrite = True
         if overwrite or not exists(self.bm25_idx_path):
             corpus = [jieba.lcut_for_search(inst['text'] if not self.candidate_has_multi_feature else ' '.join(inst['text']))
