@@ -67,6 +67,7 @@ class Searcher:
 
     @cached_property
     def model(self):
+        print(f'Using device {self.device}')
         return AutoModel.from_pretrained(self.model_name).to(self.device)
 
     @cached_property
@@ -75,7 +76,7 @@ class Searcher:
 
     @cached_property
     def reranker(self):
-        assert self.reranker_name
+        print(f'Using device {self.device}')
         return AutoModelForSequenceClassification.from_pretrained(self.reranker_name).to(self.device)
 
     @cached_property
@@ -489,6 +490,8 @@ class Evaluator:
         if self.mode == 'dense':
             assert self.query_threshold is not None or self.topk is not None, 'Dense search requires threshold or topk'
             assert self.query_threshold is None or self.topk is None, 'Dense search takes threshold or topk (not both)'
+        else:
+            print(f'Current BM25 setup is for language: zh')
 
         if not self.do_rerank:
             self.reranker_name = self.rerank_threshold = self.rerank_only_above = None
