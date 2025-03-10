@@ -14,6 +14,8 @@ import torch
 import logging
 import jieba
 from transformers import BertModel, AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
