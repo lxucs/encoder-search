@@ -34,8 +34,8 @@ class Searcher:
     model_name: str
     pooling_type: str
     normalize: bool
-    query_prefix: str
-    cand_prefix: str
+    query_template: Optional[str] = None
+    candidate_template: Optional[str] = None
 
     do_rerank: bool = False
     reranker_name: str = None
@@ -62,6 +62,16 @@ class Searcher:
         if self.do_lower_case:
             text = text.lower()
         return ' '.join(text.split())
+
+    def normalize_query(self, text):
+        text = self.normalize_text(text)
+        text = self.query_template.format(text=text) if self.query_template else text
+        return text
+
+    def normalize_candidate(self, text):
+        text = self.normalize_text(text)
+        text = self.candidate_template.format(text=text) if self.candidate_template else text
+        return text
 
     @property
     def device(self):
@@ -97,7 +107,7 @@ class Searcher:
     @classmethod
     def encode(cls, model, tokenizer, lines, pooling_type, normalize, batch_size=16):
         """ Return numpy array. """
-        assert pooling_type in ('cls', 'mean')
+        assert pooling_type in ('cls', 'mean', 'last')
         single_input = isinstance(lines, str)
         lines = [lines] if single_input else lines
 
@@ -114,6 +124,8 @@ class Searcher:
 
                 if pooling_type == 'cls':
                     hidden = hidden[:, 0]
+                elif pooling_type == 'last':
+                    hidden = hidden[:, -1]
                 else:
                     hidden[~batch['attention_mask'].bool()] = 0
                     hidden = hidden.sum(dim=1) / batch['attention_mask'].sum(dim=1, keepdim=True)
@@ -165,9 +177,9 @@ class Searcher:
             all_text, _ = self.feats
         else:
             all_text = [inst['text'] for inst in self.candidates]
-        all_text = [self.normalize_text(text) for text in all_text]
+        all_text = [self.normalize_candidate(text) for text in all_text]
 
-        to_embed = list({(self.cand_prefix + text) for text in all_text if (self.cand_prefix + text) not in text2emb})
+        to_embed = list({text for text in all_text if text not in text2emb})
         if to_embed:
             encoded = self.encode(self.model, self.tokenizer, to_embed, self.pooling_type, self.normalize)
             new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
@@ -175,15 +187,15 @@ class Searcher:
             io_util.write(self.cand_emb_path, text2emb)
             print(f'Saved {len(new_text2emb)} new candidate emb to {self.cand_emb_path}')
 
-        cand_emb = np.stack([text2emb[self.cand_prefix + text] for text in all_text], axis=0)
+        cand_emb = np.stack([text2emb[text] for text in all_text], axis=0)
         return cand_emb
 
     @cached_property
     def query2emb(self):
         text2emb = io_util.read(self.query_emb_path) if exists(self.query_emb_path) else {}
-        all_text = [self.normalize_text(inst['query']) for inst in self.queries]
+        all_text = [self.normalize_query(inst['query']) for inst in self.queries]
 
-        to_embed = list({(self.query_prefix + text) for text in all_text if (self.query_prefix + text) not in text2emb})
+        to_embed = list({text for text in all_text if text not in text2emb})
         if to_embed:
             encoded = self.encode(self.model, self.tokenizer, to_embed, self.pooling_type, self.normalize)
             new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
@@ -225,7 +237,7 @@ class Searcher:
         assert threshold is not None or topk is not None, 'Dense search needs threshold or topk'
         assert threshold is None or topk is None, 'Dense search takes either threshold or topk (not both)'
 
-        query = self.query_prefix + self.normalize_text(query)
+        query = self.normalize_query(query)
         if query in self.query2emb:
             query_emb = self.query2emb[query]
         else:
@@ -298,7 +310,7 @@ class Searcher:
     def rerank(self, query, results, threshold, rerank_only_above):
         if not results:
             return results
-        query = self.normalize_text(query)  # For rerank, do not use prefix
+        query = self.normalize_text(query)  # For rerank, do not use template
         candidates = [self.normalize_text(r['text']) for r in results]
 
         pairs = [[query, cand] for cand in candidates]
@@ -365,8 +377,9 @@ class ColbertSearcher(Searcher):
     @cached_property
     def cand2emb(self):
         text2emb = io_util.read(self.cand_emb_path) if exists(self.cand_emb_path) else {}
+        all_text = [self.normalize_candidate(inst['text']) for inst in self.candidates]
 
-        to_embed = [(self.cand_prefix + inst['text']) for inst in self.candidates if (self.cand_prefix + inst['text']) not in text2emb]
+        to_embed = list({text for text in all_text if text not in text2emb})
         if to_embed:
             encoded = self.encode(self.model, self.tokenizer, to_embed, use_pooled_hidden=False)
             new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
@@ -374,17 +387,19 @@ class ColbertSearcher(Searcher):
             io_util.write(self.cand_emb_path, text2emb)
             print(f'Saved {len(new_text2emb)} new candidate emb to {self.cand_emb_path}')
 
-        cand_emb = np.concatenate([text2emb[self.cand_prefix + inst['text']] for inst in self.candidates], axis=0)
-        toki2ci = [c_i for c_i, inst in enumerate(self.candidates) for _ in range(text2emb[self.cand_prefix + inst['text']].shape[0])]
+        cand_emb = np.concatenate([text2emb[text] for text in all_text], axis=0)  # [num_toks, hidden]
+        toki2ci = [c_i for c_i, text in enumerate(all_text) for _ in range(text2emb[text].shape[0])]
         return cand_emb, toki2ci
 
     @cached_property
     def query2emb(self):
         text2emb = io_util.read(self.query_emb_path) if exists(self.query_emb_path) else {}
-        queries_to_embed = [(self.query_prefix + inst['query']) for inst in self.queries if (self.query_prefix + inst['query']) not in text2emb]
-        if queries_to_embed:
-            encoded = self.encode(self.model, self.tokenizer, queries_to_embed, use_pooled_hidden=self.use_simple_query)
-            new_text2emb = {text: emb for text, emb in zip(queries_to_embed, encoded)}
+        all_text = [self.normalize_query(inst['query']) for inst in self.queries]
+
+        to_embed = list({text for text in all_text if text not in text2emb})
+        if to_embed:
+            encoded = self.encode(self.model, self.tokenizer, to_embed, use_pooled_hidden=self.use_simple_query)
+            new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
             text2emb |= new_text2emb
             io_util.write(self.query_emb_path, text2emb)
             print(f'Saved {len(new_text2emb)} new query emb to {self.query_emb_path}')
@@ -398,7 +413,7 @@ class ColbertSearcher(Searcher):
         assert threshold is None or topk is None, 'Dense search takes either threshold or topk (not both)'
         max_threshold = 2  # For colbert, token-level search is full search
 
-        query = self.query_prefix + self.normalize_text(query)
+        query = self.normalize_query(query)
         if query in self.query2emb:
             query_emb = self.query2emb[query]
         else:
@@ -469,8 +484,8 @@ class Evaluator:
     model_name: str
     pooling_type: str
     normalize: bool
-    query_prefix: str
-    cand_prefix: str
+    query_template: str
+    candidate_template: str
 
     is_colbert: bool = False
     use_simple_colbert_query: bool = False
@@ -499,10 +514,10 @@ class Evaluator:
             self.reranker_name = self.rerank_threshold = self.rerank_only_above = None
 
         if self.is_colbert:
-            self.searcher = ColbertSearcher(self.save_dir, self.dataset_path, self.model_name, self.pooling_type, self.normalize, self.query_prefix, self.cand_prefix,
+            self.searcher = ColbertSearcher(self.save_dir, self.dataset_path, self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
                                             use_simple_query=self.use_simple_colbert_query, use_colbert_linear=self.use_colbert_linear)
         else:
-            self.searcher = Searcher(self.save_dir, self.dataset_path, self.model_name, self.pooling_type, self.normalize, self.query_prefix, self.cand_prefix,
+            self.searcher = Searcher(self.save_dir, self.dataset_path, self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
                                      do_rerank=self.do_rerank, reranker_name=self.reranker_name)
 
         self.dataset_name = self.searcher.dataset_name
@@ -777,10 +792,10 @@ def main():
     parser = ArgumentParser('Evaluate Retrieval')
     parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', required=True)
     parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
-    parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean'])
-    parser.add_argument('--normalize', type=int, help='Whether normalize emb', default=1)
-    parser.add_argument('--query_prefix', type=str, help='query_prefix', default='')
-    parser.add_argument('--cand_prefix', type=str, help='cand_prefix', default='')
+    parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean', 'last'])
+    parser.add_argument('--disable_normalization', help='Disable embedding normalization', action='store_true')
+    parser.add_argument('--query_template', type=str, help='Prompt template for query', default=None)
+    parser.add_argument('--candidate_template', type=str, help='Prompt template for candidate', default=None)
     parser.add_argument('--is_colbert', help='Use colbert retrieval', action='store_true')
     parser.add_argument('--use_simple_colbert_query', help='Use simple query emb for colbert', action='store_true')
     parser.add_argument('--disable_colbert_linear', help='Disable linear layer for colbert', action='store_true')
@@ -799,7 +814,7 @@ def main():
         print(f'Evaluation {len(results)} results from {args.result_path}\n')
         Evaluator.get_metrics(results, query_threshold=args.threshold, rerank_threshold=args.rerank_threshold)
     else:
-        evaluator = Evaluator('evaluation', args.dataset, args.model, args.pooling, bool(args.normalize), args.query_prefix, args.cand_prefix,
+        evaluator = Evaluator('evaluation', args.dataset, args.model, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
                               is_colbert=args.is_colbert, use_simple_colbert_query=args.use_simple_colbert_query, use_colbert_linear=not args.disable_colbert_linear,
                               query_threshold=args.threshold, topk=args.topk, mode=args.mode,
                               do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)

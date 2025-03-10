@@ -327,7 +327,7 @@ def main():
     parser.add_argument('--dataset', type=str, help='Dataset under ./dataset_pairs', required=True)
     parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
     parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean'])
-    parser.add_argument('--normalize', type=int, help='Whether normalize emb', default=1)
+    parser.add_argument('--disable_normalization', help='Disable embedding normalization', action='store_true')
     parser.add_argument('--query_prefix', type=str, help='query_prefix', default='')
     parser.add_argument('--cand_prefix', type=str, help='cand_prefix', default='')
     parser.add_argument('--threshold', type=float, help='Search threshold', required=True)
@@ -344,7 +344,7 @@ def main():
         print(f'Evaluation {len(results)} results from {args.result_path}\n')
         Evaluator.get_metrics(results, threshold=args.threshold, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)
     else:
-        evaluator = Evaluator('evaluation', args.dataset, args.model, args.pooling, bool(args.normalize), args.query_prefix, args.cand_prefix,
+        evaluator = Evaluator('evaluation', args.dataset, args.model, args.pooling, not args.disable_normalization, args.query_prefix, args.cand_prefix,
                               query_threshold=args.threshold, mode=args.mode,
                               do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)
         evaluator.get_results()
