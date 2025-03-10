@@ -336,7 +336,7 @@ def main():
     parser.add_argument('--reranker_name', type=str, help='Reranker name or path', default=None)
     parser.add_argument('--rerank_threshold', type=float, help='Rerank threshold', default=None)
     parser.add_argument('--rerank_only_above', type=float, help='Rerank only on above-distance', default=None)
-    parser.add_argument('--result_path', type=str, help='Saved result path to compute metrics', default=None)
+    parser.add_argument('--result_path', type=str, help='Saved retrieval results to compute metrics directly', default=None)
     args = parser.parse_args()
 
     if args.result_path:

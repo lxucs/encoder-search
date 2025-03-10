@@ -105,7 +105,7 @@ class Searcher:
         all_hidden = []
         for l_i in trange(0, len(lines), batch_size, desc='Encode'):
             batch = lines_sorted[l_i: l_i + batch_size]
-            batch = tokenizer(batch, truncation=True, padding=True, max_length=512, return_tensors='pt').to(model.device)
+            batch = tokenizer(batch, truncation=True, padding=True, max_length=min(8192, model.config.max_position_embeddings), return_tensors='pt').to(model.device)
             with torch.no_grad():
                 hidden = model(**batch)['last_hidden_state']  # [bsz, seq_len, hidden]
 
@@ -132,7 +132,7 @@ class Searcher:
         all_probs = []
         for l_i in trange(0, len(pairs), batch_size, desc='Encode', disable=True):
             batch = pairs[l_i: l_i + batch_size]
-            batch = tokenizer(batch, truncation=True, padding=True, max_length=512, return_tensors='pt').to(reranker.device)
+            batch = tokenizer(batch, truncation=True, padding=True, max_length=min(8192, reranker.config.max_position_embeddings), return_tensors='pt').to(reranker.device)
             with torch.no_grad():
                 logits = reranker(**batch)['logits']
                 probs = torch.nn.functional.sigmoid(logits).view(-1)
@@ -342,7 +342,7 @@ class ColbertSearcher(Searcher):
         all_hidden = []
         for l_i in trange(0, len(lines), batch_size, desc='Encode'):
             batch_lines = lines[l_i: l_i + batch_size]
-            batch = tokenizer(batch_lines, truncation=True, padding=True, max_length=512, return_tensors='pt').to(model.device)
+            batch = tokenizer(batch_lines, truncation=True, padding=True, max_length=min(8192, model.config.max_position_embeddings), return_tensors='pt').to(model.device)
             with torch.no_grad():
                 pooled_hidden, colbert_hidden = model.encode(batch, remove_colbert_padding=True)
 
@@ -786,7 +786,7 @@ def main():
     parser.add_argument('--reranker_name', type=str, help='Reranker name or path', default=None)
     parser.add_argument('--rerank_threshold', type=float, help='Rerank threshold', default=None)
     parser.add_argument('--rerank_only_above', type=float, help='Rerank only on above-distance', default=None)
-    parser.add_argument('--result_path', type=str, help='Saved result path to compute metrics', default=None)
+    parser.add_argument('--result_path', type=str, help='Saved retrieval results to compute metrics directly', default=None)
     args = parser.parse_args()
 
     if args.result_path:
