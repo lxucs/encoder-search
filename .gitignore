@@ -177,3 +177,6 @@ dataset_*
 !dataset_*.py
 evaluation
 tmp.py
+
+*.json
+!test.json

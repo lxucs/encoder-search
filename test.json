@@ -1,0 +1,22 @@
+[
+  {
+    "queries": [
+      "code",
+      "kitchen",
+      "language"
+    ],
+    "candidates": [
+      "Below is an example to encode queries and passages from the MS-MARCO passage ranking dataset.",
+      "It supports 100 languages from xlm-roberta, but low-resource languages may see performance degradation."
+    ]
+  },
+  {
+    "queries": [
+      "park"
+    ],
+    "candidates": [
+      "The world’s first national park (established in 1872), Yellowstone is renowned for its geothermal features, including geysers, hot springs, and fumaroles.",
+      "If the input is an empty list of sets, the intersection is undefined or should be an empty set."
+    ]
+  }
+]

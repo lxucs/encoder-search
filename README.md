@@ -35,3 +35,9 @@ Notes:
 
 `python run_pairs.py --dataset XXX --threshold 0.9 --model XXX`
 
+
+### On-the-fly Evaluation
+
+Usage: `python test.py --help`
+
+Example: `python test.py --data test.json --model BAAI/bge-base-en-v1.5`

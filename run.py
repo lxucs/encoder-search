@@ -28,35 +28,34 @@ cn_stopwords = set(io_util.read('resources/cn_stopwords.txt'))
 @dataclass
 class Searcher:
 
-    save_dir: str
-    dataset_name: str
-
-    model_name: str
-    pooling_type: str
-    normalize: bool
+    model_name: Optional[str] = None
+    pooling_type: Optional[str] = None
+    normalize: bool = True
     query_template: Optional[str] = None
     candidate_template: Optional[str] = None
 
-    do_rerank: bool = False
     reranker_name: str = None
 
     do_lower_case: bool = True
 
+    save_dir: Optional[str] = None
+    dataset_name: Optional[str] = None
+
     def __post_init__(self):
+        # Model-related path
+        self.model_alias = self.model_name.split('/')[-1] if self.model_name else None
+        self.reranker_alias = self.reranker_name.split('/')[-1] if self.reranker_name else None
+        if self.save_dir and self.model_alias:
+            self.cand_emb_path = join(self.save_dir, f'cache.cand.emb.{self.model_alias}.bin')
+            self.query_emb_path = join(self.save_dir, f'cache.query.emb.{self.model_alias}.bin')
+
+        # Dataset-related path
         if self.dataset_name:
-            self.model_alias = self.model_name.split('/')[-1]
             self.cand_path = join('dataset', self.dataset_name, f'candidates.jsonl')
             self.query_path = join('dataset', self.dataset_name, f'queries.jsonl')
             assert exists(self.cand_path), 'Dataset does not exist'
-
-            self.cand_emb_path = join(self.save_dir, f'cache.cand.emb.{self.model_alias}.bin')
-            self.cand_idx_path = join(self.save_dir, f'idx.{self.dataset_name}.{self.model_alias}.bin')
-            self.query_emb_path = join(self.save_dir, f'cache.query.emb.{self.model_alias}.bin')
-
             self.bm25_idx_path = join(self.save_dir, f'bm25.{self.dataset_name}.{self.model_alias}.bin')
             os.makedirs(self.save_dir, exist_ok=True)
-
-            self.reranker_alias = self.reranker_name.split('/')[-1] if self.reranker_name else None
 
     def normalize_text(self, text):
         if self.do_lower_case:
@@ -84,6 +83,7 @@ class Searcher:
 
     @cached_property
     def tokenizer(self):
+        assert self.model_name
         return AutoTokenizer.from_pretrained(self.model_name)
 
     @cached_property
@@ -206,16 +206,13 @@ class Searcher:
 
     @cached_property
     def index(self):
-        overwrite = True
-        if overwrite or not exists(self.cand_idx_path):
-            emb = self.cand2emb
-            if isinstance(emb, (list, tuple)):
-                emb = emb[0]
-            index = faiss.IndexFlatL2(emb.shape[-1])
-            index.add(emb)
-            # faiss.write_index(index, self.cand_idx_path)
-        else:
-            index = faiss.read_index(self.cand_idx_path)
+        emb = self.cand2emb
+        if isinstance(emb, (list, tuple)):
+            emb = emb[0]
+        index = faiss.IndexFlatL2(emb.shape[-1])
+        index.add(emb)
+        # faiss.write_index(index, path)
+        # index = faiss.read_index(path)
         return index
 
     @cached_property
@@ -338,9 +335,8 @@ class ColbertSearcher(Searcher):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.dataset_name:
+        if self.save_dir and self.model_alias:
             self.cand_emb_path = join(self.save_dir, f'colbert.cache.cand.emb.{self.model_alias}.bin')
-            self.cand_idx_path = join(self.save_dir, f'colbert.idx.{self.dataset_name}.{self.model_alias}.bin')
             self.query_emb_path = join(self.save_dir, f'colbert.cache.query.emb.{self.model_alias}.bin')
 
     @cached_property
@@ -479,7 +475,9 @@ class ColbertSearcher(Searcher):
 class Evaluator:
 
     save_dir: str
-    dataset_path: str
+    dataset_name: str
+    gold_score: Optional[int]
+    mode: str
 
     model_name: str
     pooling_type: str
@@ -493,41 +491,38 @@ class Evaluator:
 
     query_threshold: Optional[float] = None
     topk: Optional[int] = None
-    mode: str = 'dense'
 
     do_rerank: bool = False
     reranker_name: Optional[str] = None
     rerank_threshold: Optional[float] = None
     rerank_only_above: Optional[float] = None
 
-    gold_score: Optional[int] = None
-
     def __post_init__(self):
+        if not self.do_rerank:
+            self.reranker_name = self.rerank_threshold = self.rerank_only_above = None
+
+        # Model-related
+        if self.is_colbert:
+            self.searcher = ColbertSearcher(self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
+                                            use_simple_query=self.use_simple_colbert_query, use_colbert_linear=self.use_colbert_linear,
+                                            save_dir=self.save_dir, dataset_name=self.dataset_name)
+        else:
+            self.searcher = Searcher(self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
+                                     reranker_name=self.reranker_name,
+                                     save_dir=self.save_dir, dataset_name=self.dataset_name)
+        self.model_alias = self.searcher.model_alias
+        self.reranker_alias = self.searcher.reranker_alias
+
+        # Dataset-related
         assert self.mode in ('dense', 'bm25')
         if self.mode == 'dense':
             assert self.query_threshold is not None or self.topk is not None, 'Dense search requires threshold or topk'
             assert self.query_threshold is None or self.topk is None, 'Dense search takes threshold or topk (not both)'
-        else:
-            print(f'Current BM25 setup is for language: zh')
-
-        if not self.do_rerank:
-            self.reranker_name = self.rerank_threshold = self.rerank_only_above = None
-
-        if self.is_colbert:
-            self.searcher = ColbertSearcher(self.save_dir, self.dataset_path, self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
-                                            use_simple_query=self.use_simple_colbert_query, use_colbert_linear=self.use_colbert_linear)
-        else:
-            self.searcher = Searcher(self.save_dir, self.dataset_path, self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
-                                     do_rerank=self.do_rerank, reranker_name=self.reranker_name)
-
-        self.dataset_name = self.searcher.dataset_name
-        self.model_alias = self.searcher.model_alias
-        self.reranker_alias = self.searcher.reranker_alias
-        if self.mode == 'dense':
             th_or_topk = f'th{self.query_threshold}' if self.query_threshold is not None else f'top{self.topk}'
             rerank = f'.rerank{self.rerank_threshold}.{self.reranker_alias}' if self.do_rerank else ''
             self.result_path = join(self.save_dir, f'{"colbert." if self.is_colbert else ""}results.{self.dataset_name}.{self.model_alias}.{th_or_topk}{rerank}.json')
         else:
+            print(f'Current BM25 setup is for language: zh')
             self.result_path = join(self.save_dir, f'results.{self.dataset_name}.bm25.json')
         self.report_path = self.result_path.replace('results.', 'report.')
 
@@ -683,8 +678,8 @@ class Evaluator:
 
         # Get metrics
         for inst in insts:
-            gold_ids = [pos['id'] for pos in inst['positives'] if not gold_score or pos['score'] >= gold_score]
             goldid2score = {pos['id']: pos['score'] for pos in inst['positives']}
+            gold_ids = [id_ for id_, score in goldid2score.items() if not gold_score or score >= gold_score]
 
             inst['query_threshold'] = query_threshold
             if rerank_threshold:
@@ -791,32 +786,39 @@ def tune_hyperparameters(result_path, gold_score):
 def main():
     parser = ArgumentParser('Evaluate Retrieval')
     parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', required=True)
+    parser.add_argument('--gold_score', type=str, help='Use positives >= gold_score (default to use all)', default=None)
+    parser.add_argument('--mode', type=str, help='Search mode', default='dense', choices=['dense', 'exact'])
+
     parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
     parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean', 'last'])
     parser.add_argument('--disable_normalization', help='Disable embedding normalization', action='store_true')
     parser.add_argument('--query_template', type=str, help='Prompt template for query', default=None)
     parser.add_argument('--candidate_template', type=str, help='Prompt template for candidate', default=None)
+
     parser.add_argument('--is_colbert', help='Use colbert retrieval', action='store_true')
     parser.add_argument('--use_simple_colbert_query', help='Use simple query emb for colbert', action='store_true')
     parser.add_argument('--disable_colbert_linear', help='Disable linear layer for colbert', action='store_true')
+
     parser.add_argument('--threshold', type=float, help='Search threshold', default=None)
     parser.add_argument('--topk', type=int, help='Search topk', default=None)
-    parser.add_argument('--mode', type=str, help='Search mode', default='dense', choices=['dense', 'exact'])
+
     parser.add_argument('--do_rerank', help='Do rerank', action='store_true')
     parser.add_argument('--reranker_name', type=str, help='Reranker name or path', default=None)
     parser.add_argument('--rerank_threshold', type=float, help='Rerank threshold', default=None)
     parser.add_argument('--rerank_only_above', type=float, help='Rerank only on above-distance', default=None)
+
     parser.add_argument('--result_path', type=str, help='Saved retrieval results to compute metrics directly', default=None)
     args = parser.parse_args()
 
     if args.result_path:
         results = io_util.read(args.result_path)
         print(f'Evaluation {len(results)} results from {args.result_path}\n')
-        Evaluator.get_metrics(results, query_threshold=args.threshold, rerank_threshold=args.rerank_threshold)
+        Evaluator.get_metrics(results, gold_score=args.gold_score, query_threshold=args.threshold, rerank_threshold=args.rerank_threshold)
     else:
-        evaluator = Evaluator('evaluation', args.dataset, args.model, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
+        evaluator = Evaluator('evaluation', args.dataset, args.gold_score, args.mode,
+                              args.model, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
                               is_colbert=args.is_colbert, use_simple_colbert_query=args.use_simple_colbert_query, use_colbert_linear=not args.disable_colbert_linear,
-                              query_threshold=args.threshold, topk=args.topk, mode=args.mode,
+                              query_threshold=args.threshold, topk=args.topk,
                               do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)
         evaluator.get_results()
 
