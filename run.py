@@ -232,7 +232,6 @@ class Searcher:
         """ Sorted by distance. """
         assert query, 'Empty search'
         assert threshold is not None or topk is not None, 'Dense search needs threshold or topk'
-        assert threshold is None or topk is None, 'Dense search takes either threshold or topk (not both)'
 
         query = self.normalize_query(query)
         if query in self.query2emb:
@@ -274,6 +273,12 @@ class Searcher:
         results = sorted(results, key=lambda v: v['distance'])
         for i, inst in enumerate(results):
             inst['rank'] = i
+
+        # Ensure threshold and topk after sort
+        if threshold:
+            results = [r for r in results if r['distance'] <= threshold]
+        if topk:
+            results = results[:topk]
         return results
 
     def bm25_search(self, text):
@@ -406,8 +411,7 @@ class ColbertSearcher(Searcher):
         assert query_pooling in ('mean', 'min')
         assert query, 'Empty search'
         assert threshold is not None or topk is not None, 'Dense search needs threshold or topk'
-        assert threshold is None or topk is None, 'Dense search takes either threshold or topk (not both)'
-        max_threshold = 2  # For colbert, token-level search is full search
+        max_threshold = 10000  # For colbert, token-level search is full search
 
         query = self.normalize_query(query)
         if query in self.query2emb:
@@ -463,11 +467,11 @@ class ColbertSearcher(Searcher):
         for i, inst in enumerate(results):
             inst['rank'] = i
 
-        # Apply threshold and topk after sort
-        if topk is not None:
-            results = results[:topk]
-        else:
+        # Ensure threshold and topk after sort
+        if threshold:
             results = [r for r in results if r['distance'] <= threshold]
+        if topk:
+            results = results[:topk]
         return results
 
 
@@ -517,8 +521,8 @@ class Evaluator:
         assert self.mode in ('dense', 'bm25')
         if self.mode == 'dense':
             assert self.query_threshold is not None or self.topk is not None, 'Dense search requires threshold or topk'
-            assert self.query_threshold is None or self.topk is None, 'Dense search takes threshold or topk (not both)'
-            th_or_topk = f'th{self.query_threshold}' if self.query_threshold is not None else f'top{self.topk}'
+            th_or_topk = [f'th{self.query_threshold}' if self.query_threshold else '', f'top{self.topk}' if self.topk else '']
+            th_or_topk = '_'.join([v for v in th_or_topk if v])
             rerank = f'.rerank{self.rerank_threshold}.{self.reranker_alias}' if self.do_rerank else ''
             self.result_path = join(self.save_dir, f'{"colbert." if self.is_colbert else ""}results.{self.dataset_name}.{self.model_alias}.{th_or_topk}{rerank}.json')
         else:
@@ -538,12 +542,12 @@ class Evaluator:
         for inst in tqdm(query_insts, desc='Search', disable=False):
             inst['mode'] = self.mode
             if self.mode == 'dense':
-                inst['topk'] = self.topk
                 inst['query_threshold'] = self.query_threshold
+                inst['topk'] = self.topk
                 inst['query_results'] = self.searcher.dense_search(inst['query'], threshold=inst['query_threshold'], topk=inst['topk'])
             else:
+                inst['query_threshold'] = None
                 inst['topk'] = None
-                inst['query_threshold'] = float('inf')
                 inst['query_results'] = self.searcher.bm25_search(inst['query'])
 
         # Rerank
@@ -598,10 +602,10 @@ class Evaluator:
         return ap
 
     @classmethod
-    def compute_ndcg(cls, pred_ids, goldid2score):
+    def compute_ndcg(cls, pred_ids, goldid2score, topk=None):
         """ pred_ids is sorted. """
-        pred_scores = np.array([(goldid2score.get(id_, 0)) for id_ in pred_ids])
-        gold_scores = np.array(sorted(goldid2score.values(), reverse=True)[:len(pred_scores)])
+        pred_scores = np.array([(goldid2score.get(id_, 0)) for id_ in pred_ids[:topk]])  # No assumption on pred length
+        gold_scores = np.array(sorted(goldid2score.values(), reverse=True)[:topk])
         pred_dcg = (pred_scores / np.log2(np.arange(2, len(pred_scores) + 2))).sum().item()
         gold_dcg = (gold_scores / np.log2(np.arange(2, len(gold_scores) + 2))).sum().item()
         return (pred_dcg / gold_dcg) if gold_dcg else None
@@ -639,7 +643,7 @@ class Evaluator:
     @classmethod
     def finalize_metrics(cls, query_metric2score, times100=False):
         """ Compute average. """
-        beta = 0.5
+        beta = 2
         for metric in query_metric2score.keys():
             scores = query_metric2score[metric]
             query_metric2score[metric] = (sum(scores) / len(scores) * (100 if times100 else 1)) if scores else 0
@@ -660,7 +664,7 @@ class Evaluator:
         return query_metric2score
 
     @classmethod
-    def get_metrics(cls, insts, gold_score=None, query_threshold=None, rerank_threshold=None):
+    def get_metrics(cls, insts, gold_score=None, query_threshold=None, topk=None, rerank_threshold=None):
         if gold_score is None:
             print(f'Using all positives as gold')
         else:
@@ -672,23 +676,29 @@ class Evaluator:
         print()
 
         query_threshold = query_threshold or insts[0]['query_threshold']  # Can be None
-        topk = insts[0]['topk']  # Can be None
-        metric_suffix = f' @th{query_threshold}' if query_threshold is not None else f' @top{topk}' if topk is not None else ''
+        topk = min(insts[0]['topk'], topk or float('inf')) if insts[0]['topk'] is not None else topk  # Can be None
+        th_or_topk = [f'th{query_threshold}' if query_threshold else '', f'top{topk}' if topk else '']
+        th_or_topk = '_'.join([v for v in th_or_topk if v])
+        metric_suffix = f' @{th_or_topk}' if th_or_topk else ''
 
         # Get metrics
         for inst in insts:
             goldid2score = {pos['id']: pos['score'] for pos in inst['positives']}
             gold_ids = [id_ for id_, score in goldid2score.items() if not gold_score or score >= gold_score]
 
+            # Apply threshold and topk
             inst['query_threshold'] = query_threshold
+            inst['topk'] = topk
             if rerank_threshold:
                 inst['rerank_threshold'] = rerank_threshold
             query_results = [r for r in inst['query_results'] if (query_threshold is None or r['distance'] <= query_threshold) and (rerank_threshold is None or r['rerank_score'] >= rerank_threshold)]
+            if topk:
+                query_results = query_results[:topk]
 
             result_ids = [r['id'] for r in query_results]
             rr_score = cls.compute_reciprocal_rank(result_ids, gold_ids)
             ap_score = cls.compute_average_precision(result_ids, gold_ids)
-            ndcg_score = cls.compute_ndcg(result_ids, goldid2score)
+            ndcg_score = cls.compute_ndcg(result_ids, goldid2score, topk=topk)
             hit_score = cls.compute_query_hit(result_ids, gold_ids)
             pair_recall = cls.compute_pair_recall(result_ids, gold_ids)
             pair_precision = cls.compute_pair_precision(result_ids, gold_ids)
@@ -751,12 +761,12 @@ class Evaluator:
 
     @classmethod
     def get_report(cls, results, candidates=None):
-        cid2text = {inst['id']: inst['text'] for inst in candidates}
+        cid2text = {inst['id']: inst['text'] for inst in candidates} if candidates else {}
         report = []
         for inst in results:
             over_recall = [{'id': r['id'], 'text': r['text'], 'distance': r['distance'], 'rerank': r.get('rerank_score', None)}
                            for r in inst['query_results'] if not r['is_positive']]
-            need_recall = [{'id': r['id'], 'text': r['text'] if 'text' in r else cid2text[r['id']]}
+            need_recall = [{'id': r['id'], 'text': r['text'] if 'text' in r else cid2text.get(r['id'], None)}
                            for r in inst['positives'] if not r['recall']]
             p = inst['query_metrics']['pair_precision']
             r = inst['query_metrics']['pair_recall']
@@ -798,8 +808,8 @@ def main():
     parser.add_argument('--use_simple_colbert_query', help='Use simple query emb for colbert', action='store_true')
     parser.add_argument('--disable_colbert_linear', help='Disable linear layer for colbert', action='store_true')
 
-    parser.add_argument('--threshold', type=float, help='Search threshold', default=None)
-    parser.add_argument('--topk', type=int, help='Search topk', default=None)
+    parser.add_argument('--threshold', type=float, help='Search threshold (for dense mode)', default=None)
+    parser.add_argument('--topk', type=int, help='Search topk (for dense mode)', default=None)
 
     parser.add_argument('--do_rerank', help='Do rerank', action='store_true')
     parser.add_argument('--reranker_name', type=str, help='Reranker name or path', default=None)
@@ -812,7 +822,7 @@ def main():
     if args.result_path:
         results = io_util.read(args.result_path)
         print(f'Evaluation {len(results)} results from {args.result_path}\n')
-        Evaluator.get_metrics(results, gold_score=args.gold_score, query_threshold=args.threshold, rerank_threshold=args.rerank_threshold)
+        Evaluator.get_metrics(results, gold_score=args.gold_score, query_threshold=args.threshold, topk=args.topk, rerank_threshold=args.rerank_threshold)
     else:
         evaluator = Evaluator('evaluation', args.dataset, args.gold_score, args.mode,
                               args.model, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
