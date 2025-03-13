@@ -673,8 +673,7 @@ class Evaluator:
 
         query_threshold = query_threshold or insts[0]['query_threshold']  # Can be None
         topk = insts[0]['topk']  # Can be None
-        assert query_threshold is not None or topk is not None, 'Results should have either threshold or topk'
-        metric_suffix = f'@th{query_threshold}' if query_threshold is not None else f'@top{topk}'
+        metric_suffix = f' @th{query_threshold}' if query_threshold is not None else f' @top{topk}' if topk is not None else ''
 
         # Get metrics
         for inst in insts:
@@ -697,10 +696,10 @@ class Evaluator:
             query_precision = cls.compute_query_precision(result_ids, gold_ids)
 
             inst['metric_suffix'] = metric_suffix
-            inst['query_metrics'] = {f'reciprocal_rank {metric_suffix}': rr_score,
-                                     f'average_precision {metric_suffix}': ap_score,
-                                     f'ndcg {metric_suffix}': ndcg_score,
-                                     f'hit {metric_suffix}': hit_score,
+            inst['query_metrics'] = {f'reciprocal_rank{metric_suffix}': rr_score,
+                                     f'average_precision{metric_suffix}': ap_score,
+                                     f'ndcg{metric_suffix}': ndcg_score,
+                                     f'hit{metric_suffix}': hit_score,
                                      f'query_precision': query_precision,
                                      f'query_recall': query_recall,
                                      f'pair_precision': pair_precision,

@@ -11,7 +11,7 @@ from argparse import ArgumentParser
 
 
 def main():
-    parser = ArgumentParser('Evaluate Retrieval')
+    parser = ArgumentParser('Evaluate')
     parser.add_argument('--data', type=str, help='Json path similar to test.json', default='test.json')
     parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
     parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean', 'last'])
