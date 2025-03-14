@@ -83,7 +83,7 @@ class Searcher:
     @cached_property
     def model(self):
         print(f'Using device {self.device}')
-        args = {'torch_dtype': self.float16_dtype, 'trust_remote_code': True}
+        args = {'torch_dtype': 'auto', 'trust_remote_code': True}
         model = AutoModel.from_pretrained(self.model_name, **args).to(self.device)
         return model
 
