@@ -14,15 +14,19 @@ Usage: `python run.py --help`
 
 ##### Examples
 
-Use CLS pooling for BGE models:
+Use CLS pooling (default pooling) for BGE models:
 
 `python run.py --dataset nfcorpus --topk 10 --model BAAI/bge-base-en-v1.5`
 
+Use CLS pooling for GTE models:
+
+`python run.py --dataset nfcorpus --topk 10 --model Alibaba-NLP/gte-multilingual-base`
+
 Use mean pooling for e5 models, with according prompt templates:
 
-`python run.py --dataset nfcorpus --topk 10 --model intfloat/e5-base-v2 --pooling mean --query_template "query: {text}" --candidate_template "passage: {text}"`
+`python run.py --dataset nfcorpus --topk 10 --model intfloat/multilingual-e5-base --pooling mean --query_template "query: {text}" --candidate_template "passage: {text}"`
 
-Use last token pooling for gte-qwen models, with according prompt templates:
+Use last token pooling for GTE-Qwen models, with according prompt templates:
 
 `python run.py --dataset nfcorpus --topk 10 --model Alibaba-NLP/gte-Qwen2-7B-instruct --pooling last --query_template "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: {text}"`
 
@@ -37,6 +41,8 @@ Notes:
 
 
 ### On-the-fly Evaluation
+
+Compute the distance on given queries and candidates.
 
 Usage: `python test.py --help`
 

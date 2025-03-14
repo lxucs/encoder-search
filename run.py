@@ -72,6 +72,10 @@ class Searcher:
         text = self.candidate_template.format(text=text) if self.candidate_template else text
         return text
 
+    @cached_property
+    def float16_dtype(self):
+        return torch.bfloat16 if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+
     @property
     def device(self):
         return 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
@@ -79,7 +83,9 @@ class Searcher:
     @cached_property
     def model(self):
         print(f'Using device {self.device}')
-        return AutoModel.from_pretrained(self.model_name).to(self.device)
+        args = {'torch_dtype': self.float16_dtype, 'trust_remote_code': True}
+        model = AutoModel.from_pretrained(self.model_name, **args).to(self.device)
+        return model
 
     @cached_property
     def tokenizer(self):
@@ -119,7 +125,7 @@ class Searcher:
         for l_i in trange(0, len(lines), batch_size, desc='Encode'):
             batch = lines_sorted[l_i: l_i + batch_size]
             batch = tokenizer(batch, truncation=True, padding=True, max_length=min(8192, model.config.max_position_embeddings), return_tensors='pt').to(model.device)
-            with torch.no_grad():
+            with torch.inference_mode():
                 hidden = model(**batch)['last_hidden_state']  # [bsz, seq_len, hidden]
 
                 if pooling_type == 'cls':
@@ -148,7 +154,7 @@ class Searcher:
         for l_i in trange(0, len(pairs), batch_size, desc='Encode', disable=True):
             batch = pairs[l_i: l_i + batch_size]
             batch = tokenizer(batch, truncation=True, padding=True, max_length=min(8192, reranker.config.max_position_embeddings), return_tensors='pt').to(reranker.device)
-            with torch.no_grad():
+            with torch.inference_mode():
                 logits = reranker(**batch)['logits']
                 probs = torch.nn.functional.sigmoid(logits).view(-1)
                 all_probs += probs.tolist()
@@ -359,7 +365,7 @@ class ColbertSearcher(Searcher):
         for l_i in trange(0, len(lines), batch_size, desc='Encode'):
             batch_lines = lines[l_i: l_i + batch_size]
             batch = tokenizer(batch_lines, truncation=True, padding=True, max_length=min(8192, model.config.max_position_embeddings), return_tensors='pt').to(model.device)
-            with torch.no_grad():
+            with torch.inference_mode():
                 pooled_hidden, colbert_hidden = model.encode(batch, remove_colbert_padding=True)
 
                 if use_pooled_hidden:
