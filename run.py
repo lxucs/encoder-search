@@ -47,6 +47,8 @@ class Searcher:
         self.reranker_alias = self.reranker_name.split('/')[-1] if self.reranker_name else None
         if self.model_alias.startswith('checkpoint'):
             self.model_alias = '.'.join(self.model_name.split('/')[-2:])
+        if self.reranker_alias.startswith('checkpoint'):
+            self.reranker_alias = '.'.join(self.reranker_name.split('/')[-2:])
         if self.save_dir and self.model_alias:
             self.cand_emb_path = join(self.save_dir, f'cache.cand.emb.{self.model_alias}.bin')
             self.query_emb_path = join(self.save_dir, f'cache.query.emb.{self.model_alias}.bin')
