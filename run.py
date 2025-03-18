@@ -14,6 +14,12 @@ import torch
 import logging
 import jieba
 from transformers import BertModel, AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+from metric import (
+    compute_reciprocal_rank, compute_average_precision, compute_ndcg,
+    compute_pair_recall, compute_pair_precision,
+    compute_query_recall, compute_query_precision, compute_query_hit,
+    compute_f_score
+)
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
@@ -540,7 +546,7 @@ class Evaluator:
             self.result_path = join(self.save_dir, f'results.{self.dataset_name}.bm25.json')
         self.report_path = self.result_path.replace('results.', 'report.')
 
-    def get_results(self):
+    def get_results(self, save_results=True):
         query_insts = self.searcher.queries
         assert query_insts, f'No queries for dataset {self.dataset_name}'
         if self.mode == 'dense':
@@ -571,84 +577,17 @@ class Evaluator:
         # Get metrics
         results, ds2metric2score = self.get_metrics(query_insts, gold_score=self.gold_score)
 
-        # Save
-        io_util.write(self.result_path, results)
-        print(f'Saved {len(results)} query results to {self.result_path}')
+        # Save results
+        if save_results:
+            io_util.write(self.result_path, results)
+            print(f'Saved {len(results)} query results to {self.result_path}')
 
         # Save report
-        if self.mode == 'dense':
+        if save_results:
             report = self.get_report(results, self.searcher.candidates)
             io_util.write(self.report_path, report)
             print(f'Saved report to {self.report_path}')
         return results, ds2metric2score
-
-    @classmethod
-    def compute_reciprocal_rank(cls, pred_ids, gold_ids):
-        """ pred_ids is sorted. """
-        if not gold_ids:
-            return None
-        gold_ids = set(gold_ids)
-        rank = None
-        for r, id_ in enumerate(pred_ids):
-            if id_ in gold_ids:
-                rank = r + 1
-                break
-        return (1 / rank) if rank else 0
-
-    @classmethod
-    def compute_average_precision(cls, pred_ids, gold_ids):
-        """ pred_ids is sorted. """
-        if not gold_ids:
-            return None
-        gold_ids = set(gold_ids)
-        precisions, curr_hit = [], 0
-        for i, id_ in enumerate(pred_ids):
-            if id_ in gold_ids:
-                curr_hit += 1
-                precisions.append(curr_hit / (i + 1))
-            if curr_hit == len(gold_ids):
-                break  # Early stop
-        ap = (sum(precisions) / len(precisions)) if precisions else 0
-        return ap
-
-    @classmethod
-    def compute_ndcg(cls, pred_ids, goldid2score, topk=None):
-        """ pred_ids is sorted. """
-        pred_scores = np.array([(goldid2score.get(id_, 0)) for id_ in pred_ids[:topk]])  # No assumption on pred length
-        gold_scores = np.array(sorted(goldid2score.values(), reverse=True)[:topk])
-        pred_dcg = (pred_scores / np.log2(np.arange(2, len(pred_scores) + 2))).sum().item()
-        gold_dcg = (gold_scores / np.log2(np.arange(2, len(gold_scores) + 2))).sum().item()
-        return (pred_dcg / gold_dcg) if gold_dcg else None
-
-    @classmethod
-    def compute_pair_recall(cls, pred_ids, gold_ids):
-        pred_ids, gold_ids = set(pred_ids), set(gold_ids)
-        return len(gold_ids & pred_ids), len(gold_ids)
-
-    @classmethod
-    def compute_pair_precision(cls, pred_ids, gold_ids):
-        pred_ids, gold_ids = set(pred_ids), set(gold_ids)
-        return len(gold_ids & pred_ids), len(pred_ids)
-
-    @classmethod
-    def compute_query_recall(cls, pred_ids, gold_ids):
-        pred_ids, gold_ids = set(pred_ids), set(gold_ids)
-        return (len(gold_ids & pred_ids) / len(gold_ids)) if gold_ids else None
-
-    @classmethod
-    def compute_query_precision(cls, pred_ids, gold_ids):
-        pred_ids, gold_ids = set(pred_ids), set(gold_ids)
-        return (len(gold_ids & pred_ids) / len(pred_ids)) if pred_ids else None
-
-    @classmethod
-    def compute_f_score(cls, p, r, beta=1.0):
-        beta_squared = beta ** 2
-        return (1 + beta_squared) * (p * r) / ((beta_squared * p) + r) if p or r else 0
-
-    @classmethod
-    def compute_query_hit(cls, pred_ids, gold_ids):
-        pred_ids, gold_ids = set(pred_ids), set(gold_ids)
-        return float(len(pred_ids & gold_ids) > 0)
 
     @classmethod
     def finalize_metrics(cls, query_metric2score, times100=False):
@@ -659,13 +598,13 @@ class Evaluator:
             query_metric2score[metric] = (sum(scores) / len(scores) * (100 if times100 else 1)) if scores else 0
             print(f'Query evaluation: {metric} = {query_metric2score[metric]:.2f}')
 
-        query_metric2score['query_f1'] = cls.compute_f_score(query_metric2score['query_precision'], query_metric2score['query_recall'])
-        query_metric2score[f'query_f{beta}'] = cls.compute_f_score(query_metric2score['query_precision'], query_metric2score['query_recall'], beta=beta)
+        query_metric2score['query_f1'] = compute_f_score(query_metric2score['query_precision'], query_metric2score['query_recall'])
+        query_metric2score[f'query_f{beta}'] = compute_f_score(query_metric2score['query_precision'], query_metric2score['query_recall'], beta=beta)
         print(f'Query evaluation: query_f1 = {query_metric2score["query_f1"]:.2f}')
         print(f'Query evaluation: query_f{beta} = {query_metric2score[f"query_f{beta}"]:.2f}')
 
-        query_metric2score['pair_f1'] = cls.compute_f_score(query_metric2score['pair_precision'], query_metric2score['pair_recall'])
-        query_metric2score[f'pair_f{beta}'] = cls.compute_f_score(query_metric2score['pair_precision'], query_metric2score['pair_recall'], beta=beta)
+        query_metric2score['pair_f1'] = compute_f_score(query_metric2score['pair_precision'], query_metric2score['pair_recall'])
+        query_metric2score[f'pair_f{beta}'] = compute_f_score(query_metric2score['pair_precision'], query_metric2score['pair_recall'], beta=beta)
         print(f'Query evaluation: pair_f1 = {query_metric2score["pair_f1"]:.2f}')
         print(f'Query evaluation: pair_f{beta} = {query_metric2score[f"pair_f{beta}"]:.2f}')
 
@@ -706,14 +645,14 @@ class Evaluator:
                 query_results = query_results[:topk]
 
             result_ids = [r['id'] for r in query_results]
-            rr_score = cls.compute_reciprocal_rank(result_ids, gold_ids)
-            ap_score = cls.compute_average_precision(result_ids, gold_ids)
-            ndcg_score = cls.compute_ndcg(result_ids, goldid2score, topk=topk)
-            hit_score = cls.compute_query_hit(result_ids, gold_ids)
-            pair_recall = cls.compute_pair_recall(result_ids, gold_ids)
-            pair_precision = cls.compute_pair_precision(result_ids, gold_ids)
-            query_recall = cls.compute_query_recall(result_ids, gold_ids)
-            query_precision = cls.compute_query_precision(result_ids, gold_ids)
+            rr_score = compute_reciprocal_rank(result_ids, gold_ids)
+            ap_score = compute_average_precision(result_ids, gold_ids)
+            ndcg_score = compute_ndcg(result_ids, goldid2score, topk=topk)
+            hit_score = compute_query_hit(result_ids, gold_ids)
+            pair_recall = compute_pair_recall(result_ids, gold_ids)
+            pair_precision = compute_pair_precision(result_ids, gold_ids)
+            query_recall = compute_query_recall(result_ids, gold_ids)
+            query_precision = compute_query_precision(result_ids, gold_ids)
 
             inst['metric_suffix'] = metric_suffix
             inst['query_metrics'] = {f'reciprocal_rank{metric_suffix}': rr_score,
@@ -802,7 +741,7 @@ def tune_hyperparameters(result_path, gold_score):
         print(f'Score: {score:.2f} | threshold: {threshold}')
 
 
-def main():
+def main_args():
     parser = ArgumentParser('Evaluate Retrieval')
     parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', required=True)
     parser.add_argument('--gold_score', type=str, help='Use positives >= gold_score (default to use all)', default=None)
@@ -828,6 +767,11 @@ def main():
 
     parser.add_argument('--result_path', type=str, help='Saved retrieval results to compute metrics directly', default=None)
     args = parser.parse_args()
+    return args
+
+
+def main():
+    args = main_args()
 
     if args.result_path:
         results = io_util.read(args.result_path)
