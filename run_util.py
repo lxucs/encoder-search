@@ -7,7 +7,7 @@ def get_prec_at_recall(args, max_threshold=1.7):
 
     args.threshold = max_threshold
     min_th_exceed_target, max_th_below_target = float('inf'), float('-inf')
-    recall, step, min_step = None, -0.1, 0.002
+    recall, max_step, min_step_abs = None, -0.1, 0.002
     runs = []
 
     while not recall or abs(recall - recall_target) > 0.2:
@@ -28,19 +28,19 @@ def get_prec_at_recall(args, max_threshold=1.7):
             max_th_below_target = max(max_th_below_target, args.threshold)
         print(f'Threshold range: {max_th_below_target:.4f} to {min_th_exceed_target:.4f}')
 
-        if recall > recall_target and step > 0:  # to decrease th
-            step = -(step - min_step)
-        elif recall < recall_target and step < 0:  # to increase th
-            step = -step - min_step
-        args.threshold += step
+        if recall > recall_target and max_step > 0:  # to decrease th
+            max_step = -(max_step - min_step_abs)
+        elif recall < recall_target and max_step < 0:  # to increase th
+            max_step = -max_step - min_step_abs
+        args.threshold += max_step
 
         if args.threshold > min_th_exceed_target:
-            actual_threshold = min_th_exceed_target - min_step
-            step = actual_threshold - args.threshold
+            actual_threshold = min_th_exceed_target - min_step_abs
+            max_step = actual_threshold - args.threshold
             args.threshold = actual_threshold
         elif args.threshold < max_th_below_target:
-            actual_threshold = max_th_below_target + min_step
-            step = actual_threshold - args.threshold
+            actual_threshold = max_th_below_target + min_step_abs
+            max_step = actual_threshold - args.threshold
             args.threshold = actual_threshold
         print(f'=' * 60 + '\n\n')
 

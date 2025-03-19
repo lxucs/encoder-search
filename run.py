@@ -626,7 +626,7 @@ class Evaluator:
 
         query_threshold = query_threshold or insts[0]['query_threshold']  # Can be None
         topk = min(insts[0]['topk'], topk or float('inf')) if insts[0]['topk'] is not None else topk  # Can be None
-        th_or_topk = [f'th{query_threshold}' if query_threshold else '', f'top{topk}' if topk else '']
+        th_or_topk = [f'th{query_threshold:.2f}' if query_threshold else '', f'top{topk}' if topk else '']
         th_or_topk = '_'.join([v for v in th_or_topk if v])
         metric_suffix = f' @{th_or_topk}' if th_or_topk else ''
 
