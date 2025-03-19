@@ -687,7 +687,7 @@ class Evaluator:
         for ds in ds2metric2score.keys():
             print(f'Metrics per dataset {ds}:')
             ds2metric2score[ds] = cls.finalize_metrics(ds2metric2score[ds], times100=True)
-            print('=' * 20)
+            print()
 
         # Stats overall
         if len(ds2metric2score) > 1:
@@ -741,7 +741,7 @@ def tune_hyperparameters(result_path, gold_score):
         print(f'Score: {score:.2f} | threshold: {threshold}')
 
 
-def main_args():
+def main_parser():
     parser = ArgumentParser('Evaluate Retrieval')
     parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', required=True)
     parser.add_argument('--gold_score', type=str, help='Use positives >= gold_score (default to use all)', default=None)
@@ -766,12 +766,11 @@ def main_args():
     parser.add_argument('--rerank_only_above', type=float, help='Rerank only on above-distance', default=None)
 
     parser.add_argument('--result_path', type=str, help='Saved retrieval results to compute metrics directly', default=None)
-    args = parser.parse_args()
-    return args
+    return parser
 
 
 def main():
-    args = main_args()
+    args = main_parser().parse_args()
 
     if args.result_path:
         results = io_util.read(args.result_path)
@@ -784,6 +783,7 @@ def main():
                               query_threshold=args.threshold, topk=args.topk,
                               do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)
         evaluator.get_results()
+        print('-' * 80)
 
 
 if __name__ == '__main__':
