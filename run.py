@@ -121,7 +121,7 @@ class Searcher:
         return io_util.read(self.query_path) if exists(self.query_path) else None
 
     @classmethod
-    def encode(cls, model, tokenizer, lines, pooling_type, normalize, batch_size=16):
+    def encode(cls, model, tokenizer, lines, pooling_type, normalize, batch_size=32):
         """ Return numpy array. """
         assert pooling_type in ('cls', 'mean', 'last')
         single_input = isinstance(lines, str)
@@ -365,7 +365,7 @@ class ColbertSearcher(Searcher):
         return ColbertModel(self.model_name, use_linear=self.use_colbert_linear)
 
     @classmethod
-    def encode(cls, model, tokenizer, lines, use_pooled_hidden=False, batch_size=16):
+    def encode(cls, model, tokenizer, lines, use_pooled_hidden=False, batch_size=32):
         """ Return list of numpy array. """
         single_input = isinstance(lines, str)
         lines = [lines] if single_input else lines

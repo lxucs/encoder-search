@@ -1,11 +1,11 @@
 from run import main_parser, Evaluator
 
 
-def get_prec_at_recall(args, max_threshold=1.7):
+def get_prec_at_recall(args, init_threshold=1.7):
     recall_target = args.recall_target
     assert 0 < recall_target <= 100
 
-    args.threshold = max_threshold
+    args.threshold = init_threshold
     min_th_exceed_target, max_th_below_target = float('inf'), float('-inf')
     recall, max_step, min_step_abs = None, -0.1, 0.002
     runs = []
