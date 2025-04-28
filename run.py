@@ -117,6 +117,10 @@ class Searcher:
         return io_util.read(self.cand_path)
 
     @cached_property
+    def cid2text(self):
+        return {inst['id']: inst['text'] for inst in self.candidates}
+
+    @cached_property
     def queries(self):
         return io_util.read(self.query_path) if exists(self.query_path) else None
 
@@ -577,6 +581,12 @@ class Evaluator:
         # Get metrics
         results, ds2metric2score = self.get_metrics(query_insts, gold_score=self.gold_score)
 
+        # For convenience
+        for inst in results:
+            for target in (inst['positives'] + inst['negatives']):
+                if 'text' not in target:
+                    target['text'] = self.searcher.cid2text[target['id']]
+
         # Save results
         if save_results:
             io_util.write(self.result_path, results)
@@ -584,7 +594,7 @@ class Evaluator:
 
         # Save report
         if save_results:
-            report = self.get_report(results, self.searcher.candidates)
+            report = self.get_report(results)
             io_util.write(self.report_path, report)
             print(f'Saved report to {self.report_path}')
         return results, ds2metric2score
@@ -666,7 +676,7 @@ class Evaluator:
 
             result_ids, gold_ids = set(result_ids), set(gold_ids)
             for target in (inst['positives'] + inst['negatives']):
-                target[f'recall'] = target['id'] in result_ids
+                target[f'recalled'] = target['id'] in result_ids
             for r in inst['query_results']:
                 r['is_positive'] = r['id'] in gold_ids
 
@@ -709,14 +719,13 @@ class Evaluator:
         return insts, ds2metric2score
 
     @classmethod
-    def get_report(cls, results, candidates=None):
-        cid2text = {inst['id']: inst['text'] for inst in candidates} if candidates else {}
+    def get_report(cls, results):
         report = []
         for inst in results:
             over_recall = [{'id': r['id'], 'text': r['text'], 'distance': r['distance'], 'rerank': r.get('rerank_score', None)}
                            for r in inst['query_results'] if not r['is_positive']]
-            need_recall = [{'id': r['id'], 'text': r['text'] if 'text' in r else cid2text.get(r['id'], None)}
-                           for r in inst['positives'] if not r['recall']]
+            need_recall = [{'id': r['id'], 'text': r['text']}
+                           for r in inst['positives'] if not r['recalled']]
             p = inst['query_metrics']['pair_precision']
             r = inst['query_metrics']['pair_recall']
             report.append({'id': inst['id'], 'query': inst['query'],
