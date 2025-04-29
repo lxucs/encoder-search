@@ -132,9 +132,9 @@ class Searcher:
     def encode(cls, model, tokenizer, lines, pooling_type, normalize, batch_size=32):
         """ Return numpy array. """
         assert pooling_type in ('cls', 'mean', 'last')
-        if pooling_type == 'last' and tokenizer.padding_side == 'right':
-            print(f'Using "last" pooling; changing tokenizer padding side to left')
-            tokenizer.padding_side = 'left'
+        # if pooling_type == 'last' and tokenizer.padding_side == 'right':
+        #     print(f'Using "last" pooling; changing tokenizer padding side to left')
+        #     tokenizer.padding_side = 'left'
 
         single_input = isinstance(lines, str)
         lines = [lines] if single_input else lines
@@ -146,17 +146,26 @@ class Searcher:
         all_hidden = []
         for l_i in trange(0, len(lines), batch_size, desc='Encode'):
             batch = lines_sorted[l_i: l_i + batch_size]
-            batch = tokenizer(batch, truncation=True, padding=True, max_length=min(8192, model.config.max_position_embeddings), return_tensors='pt').to(model.device)
+            batch = tokenizer(batch, truncation=True, padding=True, max_length=min(8192, model.config.max_position_embeddings),
+                              return_tensors='pt').to(model.device)  # Note: some models require manual setting max_length
             with torch.inference_mode():
                 hidden = model(**batch)['last_hidden_state']  # [bsz, seq_len, hidden]
 
                 if pooling_type == 'cls':
                     hidden = hidden[:, 0]
-                elif pooling_type == 'last':
-                    hidden = hidden[:, -1]
-                else:
+                elif pooling_type == 'mean':
                     hidden[~batch['attention_mask'].bool()] = 0
                     hidden = hidden.sum(dim=1) / (batch['attention_mask'].sum(dim=1, keepdim=True) + 1e-8)
+                elif pooling_type == 'last':
+                    attention_mask = batch['attention_mask']
+                    left_padding = (attention_mask[:, -1].sum() == attention_mask.size(0))
+                    if left_padding:
+                        hidden = hidden[:, -1]
+                    else:
+                        bsz, seq_len = hidden.size(0), attention_mask.sum(dim=1) - 1
+                        hidden = hidden[torch.arange(batch_size, device=hidden.device), seq_len]
+                else:
+                    raise ValueError(pooling_type)
 
                 # Normalize in the end
                 if normalize:
