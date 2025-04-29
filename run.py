@@ -42,6 +42,7 @@ class Searcher:
 
     reranker_name: str = None
 
+    batch_size: int = 32
     do_lower_case: bool = True
 
     save_dir: Optional[str] = None
@@ -92,20 +93,23 @@ class Searcher:
 
     @cached_property
     def model(self):
-        print(f'Using device {self.device}')
+        print(f'Using device: {self.device}')
         args = {'torch_dtype': 'auto', 'trust_remote_code': True}
         model = AutoModel.from_pretrained(self.model_name, **args).to(self.device)
+        num_params = sum(p.numel() for n, p in model.named_parameters() if 'embedding' not in n)
+        num_params = f'{num_params/1e9:.2f}B' if num_params >= 1e9 else f'{num_params/1e6:.2f}M'
+        print(f'# model params w/o embedding: {num_params}')
         return model
 
     @cached_property
     def tokenizer(self):
         assert self.model_name
-        return AutoTokenizer.from_pretrained(self.model_name)
+        return AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
 
     @cached_property
     def reranker(self):
         print(f'Using device {self.device}')
-        return AutoModelForSequenceClassification.from_pretrained(self.reranker_name).to(self.device)
+        return AutoModelForSequenceClassification.from_pretrained(self.reranker_name, trust_remote_code=True).to(self.device)
 
     @cached_property
     def reranker_tokenizer(self):
@@ -128,6 +132,10 @@ class Searcher:
     def encode(cls, model, tokenizer, lines, pooling_type, normalize, batch_size=32):
         """ Return numpy array. """
         assert pooling_type in ('cls', 'mean', 'last')
+        if pooling_type == 'last' and tokenizer.padding_side == 'right':
+            print(f'Using "last" pooling; changing tokenizer padding side to left')
+            tokenizer.padding_side = 'left'
+
         single_input = isinstance(lines, str)
         lines = [lines] if single_input else lines
 
@@ -148,7 +156,7 @@ class Searcher:
                     hidden = hidden[:, -1]
                 else:
                     hidden[~batch['attention_mask'].bool()] = 0
-                    hidden = hidden.sum(dim=1) / batch['attention_mask'].sum(dim=1, keepdim=True)
+                    hidden = hidden.sum(dim=1) / (batch['attention_mask'].sum(dim=1, keepdim=True) + 1e-8)
 
                 # Normalize in the end
                 if normalize:
@@ -201,7 +209,7 @@ class Searcher:
 
         to_embed = list({text for text in all_text if text not in text2emb})
         if to_embed:
-            encoded = self.encode(self.model, self.tokenizer, to_embed, self.pooling_type, self.normalize)
+            encoded = self.encode(self.model, self.tokenizer, to_embed, self.pooling_type, self.normalize, batch_size=self.batch_size)
             new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
             text2emb |= new_text2emb
             io_util.write(self.cand_emb_path, text2emb)
@@ -217,7 +225,7 @@ class Searcher:
 
         to_embed = list({text for text in all_text if text not in text2emb})
         if to_embed:
-            encoded = self.encode(self.model, self.tokenizer, to_embed, self.pooling_type, self.normalize)
+            encoded = self.encode(self.model, self.tokenizer, to_embed, self.pooling_type, self.normalize, batch_size=self.batch_size)
             new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
             text2emb |= new_text2emb
             io_util.write(self.query_emb_path, text2emb)
@@ -257,7 +265,7 @@ class Searcher:
         if query in self.query2emb:
             query_emb = self.query2emb[query]
         else:
-            query_emb = self.encode(self.model, self.tokenizer, query, self.pooling_type, self.normalize)
+            query_emb = self.encode(self.model, self.tokenizer, query, self.pooling_type, self.normalize, batch_size=self.batch_size)
 
         if topk is not None:
             distances, indices = self.index.search(np.expand_dims(query_emb, axis=0), k=topk)
@@ -402,7 +410,7 @@ class ColbertSearcher(Searcher):
 
         to_embed = list({text for text in all_text if text not in text2emb})
         if to_embed:
-            encoded = self.encode(self.model, self.tokenizer, to_embed, use_pooled_hidden=False)
+            encoded = self.encode(self.model, self.tokenizer, to_embed, use_pooled_hidden=False, batch_size=self.batch_size)
             new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
             text2emb |= new_text2emb
             io_util.write(self.cand_emb_path, text2emb)
@@ -419,7 +427,7 @@ class ColbertSearcher(Searcher):
 
         to_embed = list({text for text in all_text if text not in text2emb})
         if to_embed:
-            encoded = self.encode(self.model, self.tokenizer, to_embed, use_pooled_hidden=self.use_simple_query)
+            encoded = self.encode(self.model, self.tokenizer, to_embed, use_pooled_hidden=self.use_simple_query, batch_size=self.batch_size)
             new_text2emb = {text: emb for text, emb in zip(to_embed, encoded)}
             text2emb |= new_text2emb
             io_util.write(self.query_emb_path, text2emb)
@@ -437,7 +445,7 @@ class ColbertSearcher(Searcher):
         if query in self.query2emb:
             query_emb = self.query2emb[query]
         else:
-            query_emb = self.encode(self.model, self.tokenizer, query, use_pooled_hidden=self.use_simple_query)
+            query_emb = self.encode(self.model, self.tokenizer, query, use_pooled_hidden=self.use_simple_query, batch_size=self.batch_size)
         # Handle both simple and colbert query
         if len(query_emb.shape) == 1:
             query_emb = np.expand_dims(query_emb, axis=0)
@@ -521,6 +529,8 @@ class Evaluator:
     rerank_threshold: Optional[float] = None
     rerank_only_above: Optional[float] = None
 
+    batch_size: int = 32
+
     def __post_init__(self):
         if not self.do_rerank:
             self.reranker_name = self.rerank_threshold = self.rerank_only_above = None
@@ -529,11 +539,13 @@ class Evaluator:
         if self.is_colbert:
             self.searcher = ColbertSearcher(self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
                                             use_simple_query=self.use_simple_colbert_query, use_colbert_linear=self.use_colbert_linear,
-                                            save_dir=self.save_dir, dataset_name=self.dataset_name)
+                                            save_dir=self.save_dir, dataset_name=self.dataset_name,
+                                            batch_size=self.batch_size)
         else:
             self.searcher = Searcher(self.model_name, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
                                      reranker_name=self.reranker_name,
-                                     save_dir=self.save_dir, dataset_name=self.dataset_name)
+                                     save_dir=self.save_dir, dataset_name=self.dataset_name,
+                                     batch_size=self.batch_size)
         self.model_alias = self.searcher.model_alias
         self.reranker_alias = self.searcher.reranker_alias
 
@@ -774,6 +786,8 @@ def main_parser():
     parser.add_argument('--rerank_threshold', type=float, help='Rerank threshold', default=None)
     parser.add_argument('--rerank_only_above', type=float, help='Rerank only on above-distance', default=None)
 
+    parser.add_argument('--batch_size', type=int, help='Eval batch size', default=32)
+
     parser.add_argument('--result_path', type=str, help='Saved retrieval results to compute metrics directly', default=None)
     return parser
 
@@ -790,7 +804,8 @@ def main():
                               args.model, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
                               is_colbert=args.is_colbert, use_simple_colbert_query=args.use_simple_colbert_query, use_colbert_linear=not args.disable_colbert_linear,
                               query_threshold=args.threshold, topk=args.topk,
-                              do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above)
+                              do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above,
+                              batch_size=args.batch_size)
         evaluator.get_results()
         print('-' * 80)
 
