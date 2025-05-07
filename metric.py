@@ -33,12 +33,14 @@ def compute_average_precision(pred_ids, gold_ids):
 def compute_ndcg(pred_ids, goldid2score, topk=None):
     """ pred_ids is sorted. """
     topk = topk or len(pred_ids)
+    if not isinstance(goldid2score, dict):
+        goldid2score = {gold: 1 for gold in goldid2score}
+
     pred_scores = np.array([(goldid2score.get(id_, 0)) for id_ in pred_ids[:topk]])  # No assumption on pred length
     gold_scores = np.array(sorted(goldid2score.values(), reverse=True)[:topk])
     pred_dcg = (pred_scores / np.log2(np.arange(2, len(pred_scores) + 2))).sum().item()
     gold_dcg = (gold_scores / np.log2(np.arange(2, len(gold_scores) + 2))).sum().item()
     return (pred_dcg / gold_dcg) if gold_dcg else None
-
 
 def compute_pair_recall(pred_ids, gold_ids):
     pred_ids, gold_ids = set(pred_ids), set(gold_ids)
