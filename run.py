@@ -775,7 +775,7 @@ def tune_hyperparameters(result_path, gold_score):
 
 def main_parser():
     parser = ArgumentParser('Evaluate Retrieval')
-    parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', required=True)
+    parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', default=None)
     parser.add_argument('--gold_score', type=str, help='Use positives >= gold_score (default to use all)', default=None)
     parser.add_argument('--mode', type=str, help='Search mode', default='dense', choices=['dense', 'exact'])
 
@@ -812,6 +812,7 @@ def main():
         print(f'Evaluation {len(results)} results from {args.result_path}\n')
         Evaluator.get_metrics(results, gold_score=args.gold_score, query_threshold=args.threshold, topk=args.topk, rerank_threshold=args.rerank_threshold)
     else:
+        assert args.dataset and args.model
         evaluator = Evaluator('evaluation', args.dataset, args.gold_score, args.mode,
                               args.model, args.max_len, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
                               is_colbert=args.is_colbert, use_simple_colbert_query=args.use_simple_colbert_query, use_colbert_linear=not args.disable_colbert_linear,
