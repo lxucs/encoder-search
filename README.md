@@ -14,6 +14,10 @@ Usage: `python run.py --help`
 
 ##### Examples
 
+Use BM25 (only for Chinese for now):
+
+`python run.py --dataset xxx --topk 10 --mode bm25`
+
 Use CLS pooling (default pooling) for BGE models:
 
 `python run.py --dataset nfcorpus --topk 10 --model BAAI/bge-base-en-v1.5`

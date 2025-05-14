@@ -319,23 +319,18 @@ class Searcher:
             results = results[:topk]
         return results
 
-    def bm25_search(self, text):
+    def bm25_search(self, text, threshold=None, topk=None):
         """ Sorted by distance. """
         text = self.normalize_text(text)
         assert text, 'Empty search'
+        threshold = threshold or 1e-3
 
-        indices = None
-        for term in jieba.lcut(text):
-            if term not in cn_stopwords:
-                scores = self.bm25_index.get_scores([term]).tolist()
-                term_indices = {idx for idx, score in enumerate(scores) if score > 1e-3}
-                if indices is None:
-                    indices = term_indices
-                else:
-                    indices &= term_indices  # Take overlap
+        query = jieba.lcut(text)
+        scores = self.bm25_index.get_scores(query).tolist()
 
-        results = [self.candidates[idx] | {'idx': idx, 'distance': 0.01}
-                   for idx in indices]
+        # Get results
+        results = [self.candidates[idx] | {'idx': idx, 'distance': -score}
+                   for idx, score in enumerate(scores) if score >= threshold]
 
         # Rule
         for r in results:
@@ -345,6 +340,12 @@ class Searcher:
         results = sorted(results, key=lambda v: v['distance'])
         for i, inst in enumerate(results):
             inst['rank'] = i
+
+        # Ensure threshold and topk after sort
+        if threshold:
+            results = [r for r in results if r['distance'] <= threshold]
+        if topk:
+            results = results[:topk]
         return results
 
     def rerank(self, query, results, threshold, rerank_only_above):
@@ -590,8 +591,8 @@ class Evaluator:
                 inst['query_results'] = self.searcher.dense_search(inst['query'], threshold=inst['query_threshold'], topk=inst['topk'])
             else:
                 inst['query_threshold'] = None
-                inst['topk'] = None
-                inst['query_results'] = self.searcher.bm25_search(inst['query'])
+                inst['topk'] = self.topk
+                inst['query_results'] = self.searcher.bm25_search(inst['query'], topk=inst['topk'])
 
         # Rerank
         if self.do_rerank:
@@ -777,7 +778,7 @@ def main_parser():
     parser = ArgumentParser('Evaluate Retrieval')
     parser.add_argument('--dataset', type=str, help='Dataset under ./dataset', default=None)
     parser.add_argument('--gold_score', type=str, help='Use positives >= gold_score (default to use all)', default=None)
-    parser.add_argument('--mode', type=str, help='Search mode', default='dense', choices=['dense', 'exact'])
+    parser.add_argument('--mode', type=str, help='Search mode', default='dense', choices=['dense', 'bm25'])
 
     parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
     parser.add_argument('--max_len', type=int, help='Max seq length', default=None)
