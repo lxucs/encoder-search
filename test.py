@@ -17,6 +17,7 @@ def main():
     cases = io_util.read(args.data)
     searcher = Searcher(args.model, pooling_type=args.pooling, query_template=args.query_template, candidate_template=args.candidate_template,
                         reranker_name=args.reranker_name)
+    print(f'Using model: {searcher.model_alias}')
 
     for case in cases:
         case['queries'] = [searcher.normalize_query(line) for line in case['queries']]
@@ -26,10 +27,9 @@ def main():
     for case in cases:
         q_emb = searcher.encode(searcher.model, searcher.tokenizer, case['queries'], searcher.pooling_type, searcher.normalize)
         c_emb = searcher.encode(searcher.model, searcher.tokenizer, case['candidates'], searcher.pooling_type, searcher.normalize)
-        # dists = np.linalg.norm(src_emb - tgt_emb, axis=-1).tolist()
 
         sim = q_emb @ c_emb.T
-        dists = (2 - 2 * sim).flatten().tolist()  # Distance: L2 square
+        dists = (2 - 2 * sim).flatten().tolist()  # Faiss distance: L2 square
 
         rank_scores = []
         if searcher.reranker_name:
