@@ -14,6 +14,7 @@ import torch
 import logging
 import jieba
 from transformers import BertModel, AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+from sentence_transformers import SentenceTransformer
 from metric import (
     compute_reciprocal_rank, compute_average_precision, compute_ndcg,
     compute_pair_recall, compute_pair_precision,
@@ -50,6 +51,8 @@ class Searcher:
     dataset_name: Optional[str] = None
 
     def __post_init__(self):
+        assert self.pooling_type in ('cls', 'mean', 'last', 'use_sentence_transformer')
+
         # Model-related path
         self.model_alias = self.model_name.split('/')[-1] if self.model_name else None
         self.reranker_alias = self.reranker_name.split('/')[-1] if self.reranker_name else None
@@ -94,12 +97,14 @@ class Searcher:
 
     @cached_property
     def model(self):
-        print(f'Using device: {self.device}')
+        if self.pooling_type == 'use_sentence_transformer':
+            return SentenceTransformer(self.model_name)
+        print(f'Use model {self.model_alias} on device: {self.device}')
         args = {'torch_dtype': 'auto', 'trust_remote_code': True}
         model = AutoModel.from_pretrained(self.model_name, **args).to(self.device)
         num_params = sum(p.numel() for n, p in model.named_parameters() if 'embedding' not in n)
         num_params = f'{num_params/1e9:.2f}B' if num_params >= 1e9 else f'{num_params/1e6:.2f}M'
-        print(f'# model params w/o embedding: {num_params}')
+        print(f'# params w/o embedding: {num_params}')
         return model
 
     @cached_property
@@ -109,7 +114,7 @@ class Searcher:
 
     @cached_property
     def reranker(self):
-        print(f'Using device {self.device}')
+        print(f'Use reranker {self.reranker_alias} on device: {self.device}')
         return AutoModelForSequenceClassification.from_pretrained(self.reranker_name, trust_remote_code=True).to(self.device)
 
     @cached_property
@@ -132,10 +137,9 @@ class Searcher:
     @classmethod
     def encode(cls, model, tokenizer, lines, pooling_type, normalize, max_len=None, batch_size=32):
         """ Return numpy array. """
-        assert pooling_type in ('cls', 'mean', 'last')
-        # if pooling_type == 'last' and tokenizer.padding_side == 'right':
-        #     print(f'Using "last" pooling; changing tokenizer padding side to left')
-        #     tokenizer.padding_side = 'left'
+        assert pooling_type in ('cls', 'mean', 'last', 'use_sentence_transformer')
+        if pooling_type == 'use_sentence_transformer':
+            return model.encode(lines, normalize_embeddings=normalize, batch_size=batch_size)
 
         single_input = isinstance(lines, str)
         lines = [lines] if single_input else lines
@@ -341,9 +345,7 @@ class Searcher:
         for i, inst in enumerate(results):
             inst['rank'] = i
 
-        # Ensure threshold and topk after sort
-        if threshold:
-            results = [r for r in results if r['distance'] <= threshold]
+        # Ensure topk after sort
         if topk:
             results = results[:topk]
         return results
@@ -379,6 +381,7 @@ class ColbertSearcher(Searcher):
 
     def __post_init__(self):
         super().__post_init__()
+        assert self.pooling_type != 'use_sentence_transformer'
         if self.save_dir and self.model_alias:
             self.cand_emb_path = join(self.save_dir, f'colbert.cache.cand.emb.{self.model_alias}.bin')
             self.query_emb_path = join(self.save_dir, f'colbert.cache.query.emb.{self.model_alias}.bin')
@@ -563,15 +566,15 @@ class Evaluator:
 
         # Dataset-related
         assert self.mode in ('dense', 'bm25')
+        th_or_topk = [f'th{self.query_threshold}' if self.query_threshold else '', f'top{self.topk}' if self.topk else '']
+        th_or_topk = '_'.join([v for v in th_or_topk if v])
+        assert th_or_topk, 'Require threshold or topk'
         if self.mode == 'dense':
-            assert self.query_threshold is not None or self.topk is not None, 'Dense search requires threshold or topk'
-            th_or_topk = [f'th{self.query_threshold}' if self.query_threshold else '', f'top{self.topk}' if self.topk else '']
-            th_or_topk = '_'.join([v for v in th_or_topk if v])
             rerank = f'.rerank{self.rerank_threshold}.{self.reranker_alias}' if self.do_rerank else ''
             self.result_path = join(self.save_dir, f'{"colbert." if self.is_colbert else ""}results.{self.dataset_name}.{self.model_alias}.{th_or_topk}{rerank}.json')
         else:
             print(f'Current BM25 setup is for language: zh')
-            self.result_path = join(self.save_dir, f'results.{self.dataset_name}.bm25.json')
+            self.result_path = join(self.save_dir, f'results.{self.dataset_name}.bm25.{th_or_topk}.json')
         self.report_path = self.result_path.replace('results.', 'report.')
 
     def get_results(self, save_results=True):
@@ -782,7 +785,7 @@ def main_parser():
 
     parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
     parser.add_argument('--max_len', type=int, help='Max seq length', default=None)
-    parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean', 'last'])
+    parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean', 'last', 'use_sentence_transformer'])
     parser.add_argument('--disable_normalization', help='Disable embedding normalization', action='store_true')
     parser.add_argument('--query_template', type=str, help='Prompt template for query', default=None)
     parser.add_argument('--candidate_template', type=str, help='Prompt template for candidate', default=None)
@@ -792,7 +795,7 @@ def main_parser():
     parser.add_argument('--disable_colbert_linear', help='Disable linear layer for colbert', action='store_true')
 
     parser.add_argument('--threshold', type=float, help='Search threshold (for dense mode)', default=None)
-    parser.add_argument('--topk', type=int, help='Search topk (for dense mode)', default=None)
+    parser.add_argument('--topk', type=int, help='Use top k results for evaluation', default=None)
 
     parser.add_argument('--do_rerank', help='Do rerank', action='store_true')
     parser.add_argument('--reranker_name', type=str, help='Reranker name or path', default=None)
