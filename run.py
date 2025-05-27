@@ -50,6 +50,7 @@ class Searcher:
 
     save_dir: Optional[str] = None
     dataset_name: Optional[str] = None
+    dataset_dir: Optional[str] = 'dataset'
 
     def __post_init__(self):
         assert self.pooling_type in ('cls', 'mean', 'last', 'use_sentence_transformer')
@@ -67,8 +68,8 @@ class Searcher:
 
         # Dataset-related path
         if self.dataset_name:
-            self.cand_path = join('dataset', self.dataset_name, f'candidates.jsonl')
-            self.query_path = join('dataset', self.dataset_name, f'queries.jsonl')
+            self.cand_path = join(self.dataset_dir, self.dataset_name, f'candidates.jsonl')
+            self.query_path = join(self.dataset_dir, self.dataset_name, f'queries.jsonl')
             assert exists(self.cand_path), 'Dataset does not exist'
             self.bm25_idx_path = join(self.save_dir, f'bm25.{self.dataset_name}.{self.model_alias}.bin')
             os.makedirs(self.save_dir, exist_ok=True)
