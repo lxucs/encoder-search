@@ -285,7 +285,7 @@ class Searcher:
         if query in self.query2emb:
             query_emb = self.query2emb[query]
         else:
-            query_emb = self.encode(self.model, self.tokenizer, query, self.pooling_type, self.normalize, self.max_len, batch_size=self.batch_size)
+            query_emb = self.encode(self.model, self.tokenizer, query, self.pooling_type, self.normalize, self.max_len)
 
         if topk is not None:
             distances, indices = self.index.search(np.expand_dims(query_emb, axis=0), k=topk)
@@ -465,7 +465,7 @@ class ColbertSearcher(Searcher):
         if query in self.query2emb:
             query_emb = self.query2emb[query]
         else:
-            query_emb = self.encode(self.model, self.tokenizer, query, use_pooled_hidden=self.use_simple_query, max_len=self.max_len, batch_size=self.batch_size)
+            query_emb = self.encode(self.model, self.tokenizer, query, use_pooled_hidden=self.use_simple_query, max_len=self.max_len)
         # Handle both simple and colbert query
         if len(query_emb.shape) == 1:
             query_emb = np.expand_dims(query_emb, axis=0)
