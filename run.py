@@ -74,21 +74,6 @@ class Searcher:
             self.bm25_idx_path = join(self.save_dir, f'bm25.{self.dataset_name}.{self.model_alias}.bin')
             os.makedirs(self.save_dir, exist_ok=True)
 
-    def normalize_text(self, text):
-        if self.do_lower_case:
-            text = text.lower()
-        return ' '.join(text.split())
-
-    def normalize_query(self, text):
-        text = self.normalize_text(text)
-        text = self.query_template.format(text=text) if self.query_template else text
-        return text
-
-    def normalize_candidate(self, text):
-        text = self.normalize_text(text)
-        text = self.candidate_template.format(text=text) if self.candidate_template else text
-        return text
-
     @cached_property
     def float16_dtype(self):
         return torch.bfloat16 if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8 else torch.float16
@@ -216,6 +201,21 @@ class Searcher:
         all_feats = list(feat2cis.keys())
         feati2cis = {feat_i: feat2cis[feat] for feat_i, feat in enumerate(all_feats)}
         return all_feats, feati2cis
+
+    def normalize_text(self, text):
+        if self.do_lower_case:
+            text = text.lower()
+        return ' '.join(text.split())
+
+    def normalize_query(self, text):
+        text = self.normalize_text(text)
+        text = self.query_template.format(text=text) if self.query_template else text
+        return text
+
+    def normalize_candidate(self, text):
+        text = self.normalize_text(text)
+        text = self.candidate_template.format(text=text) if self.candidate_template else text
+        return text
 
     @cached_property
     def cand2emb(self):
