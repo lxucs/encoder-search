@@ -137,7 +137,7 @@ class Searcher:
 
     @cached_property
     def queries(self):
-        return io_util.read(self.query_path) if exists(self.query_path) else None
+        return io_util.read(self.query_path) if exists(self.query_path) else []
 
     @classmethod
     def encode(cls, model, tokenizer, lines, pooling_type, normalize, max_len=None, batch_size=32):
