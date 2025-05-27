@@ -319,14 +319,15 @@ class Searcher:
 
         # Sort
         results = sorted(results, key=lambda v: v['distance'])
-        for i, inst in enumerate(results):
-            inst['rank'] = i
 
         # Ensure threshold and topk after sort
         if threshold:
             results = [r for r in results if r['distance'] <= threshold]
         if topk:
             results = results[:topk]
+
+        for i, inst in enumerate(results):
+            inst['rank'] = i
         return results
 
     def bm25_search(self, text, threshold=None, topk=None):
@@ -348,12 +349,13 @@ class Searcher:
 
         # Sort
         results = sorted(results, key=lambda v: v['distance'])
-        for i, inst in enumerate(results):
-            inst['rank'] = i
 
         # Ensure topk after sort
         if topk:
             results = results[:topk]
+
+        for i, inst in enumerate(results):
+            inst['rank'] = i
         return results
 
     def rerank(self, query, results, threshold, rerank_only_above):
@@ -512,14 +514,15 @@ class ColbertSearcher(Searcher):
 
         # Sort
         results = sorted(results, key=lambda v: v['distance'])
-        for i, inst in enumerate(results):
-            inst['rank'] = i
 
         # Ensure threshold and topk after sort
         if threshold:
             results = [r for r in results if r['distance'] <= threshold]
         if topk:
             results = results[:topk]
+
+        for i, inst in enumerate(results):
+            inst['rank'] = i
         return results
 
 
