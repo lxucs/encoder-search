@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 import io_util
 import faiss
 import os
@@ -36,6 +36,7 @@ cn_stopwords = set(io_util.read('resources/cn_stopwords.txt'))
 class Searcher:
 
     model_name: Optional[str] = None
+    device_map: Any = None
     max_len: Optional[int] = None
     pooling_type: Optional[str] = None
     normalize: bool = True
@@ -93,7 +94,7 @@ class Searcher:
 
     @property
     def device(self):
-        return 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+        return self.device_map if self.device_map is not None else 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
 
     @cached_property
     def model(self):
@@ -101,7 +102,11 @@ class Searcher:
             return SentenceTransformer(self.model_name)
         print(f'Use model {self.model_alias} on device: {self.device}')
         args = {'torch_dtype': 'auto', 'trust_remote_code': True}
-        model = AutoModel.from_pretrained(self.model_name, **args).to(self.device)
+        if self.device_map is not None:
+            args |= {'device_map': self.device_map, 'low_cpu_mem_usage': True}
+        model = AutoModel.from_pretrained(self.model_name, **args)
+        if self.device_map is None:
+            model = model.to(self.device)
         num_params = sum(p.numel() for n, p in model.named_parameters() if 'embedding' not in n)
         num_params = f'{num_params/1e9:.2f}B' if num_params >= 1e9 else f'{num_params/1e6:.2f}M'
         print(f'# params w/o embedding: {num_params}')
@@ -526,6 +531,7 @@ class Evaluator:
     mode: str
 
     model_name: str
+    device_map: Any
     max_len: Optional[int]
     pooling_type: str
     normalize: bool
@@ -552,12 +558,12 @@ class Evaluator:
 
         # Model-related
         if self.is_colbert:
-            self.searcher = ColbertSearcher(self.model_name, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
+            self.searcher = ColbertSearcher(self.model_name, self.device_map, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
                                             use_simple_query=self.use_simple_colbert_query, use_colbert_linear=self.use_colbert_linear,
                                             save_dir=self.save_dir, dataset_name=self.dataset_name,
                                             batch_size=self.batch_size)
         else:
-            self.searcher = Searcher(self.model_name, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
+            self.searcher = Searcher(self.model_name, self.device_map, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
                                      reranker_name=self.reranker_name,
                                      save_dir=self.save_dir, dataset_name=self.dataset_name,
                                      batch_size=self.batch_size)
@@ -784,6 +790,7 @@ def main_parser():
     parser.add_argument('--mode', type=str, help='Search mode', default='dense', choices=['dense', 'bm25'])
 
     parser.add_argument('--model', type=str, help='Model name or path', default='BAAI/bge-base-en-v1.5')
+    parser.add_argument('--device_map', type=str, help='Set model device map explicitly', default=None)
     parser.add_argument('--max_len', type=int, help='Max seq length', default=None)
     parser.add_argument('--pooling', type=str, help='Encoder pooling style', default='cls', choices=['cls', 'mean', 'last', 'use_sentence_transformer'])
     parser.add_argument('--disable_normalization', help='Disable embedding normalization', action='store_true')
@@ -818,7 +825,7 @@ def main():
     else:
         assert args.dataset and args.model
         evaluator = Evaluator('evaluation', args.dataset, args.gold_score, args.mode,
-                              args.model, args.max_len, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
+                              args.model, args.device_map, args.max_len, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
                               is_colbert=args.is_colbert, use_simple_colbert_query=args.use_simple_colbert_query, use_colbert_linear=not args.disable_colbert_linear,
                               query_threshold=args.threshold, topk=args.topk,
                               do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above,
