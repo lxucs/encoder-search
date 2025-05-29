@@ -286,7 +286,7 @@ class Searcher:
             query_emb = self.encode(self.model, self.tokenizer, query, self.pooling_type, self.normalize, self.max_len)
 
         if topk is not None:
-            distances, indices = self.index.search(np.expand_dims(query_emb, axis=0), k=topk)
+            distances, indices = self.index.search(np.expand_dims(query_emb, axis=0), k=min(topk, self.index.ntotal))  # Top-k should not exceed index size
             distances, indices = distances[0], indices[0]
         else:
             limits, distances, indices = self.index.range_search(np.expand_dims(query_emb, axis=0), threshold)
