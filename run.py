@@ -54,6 +54,8 @@ class Searcher:
 
     def __post_init__(self):
         assert self.pooling_type in ('cls', 'mean', 'last', 'use_sentence_transformer')
+        if self.device_map is None:
+            self.device_map = 'cuda:0' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
 
         # Model-related path
         self.model_alias = self.model_name.split('/')[-1] if self.model_name else None
@@ -86,15 +88,11 @@ class Searcher:
     def model(self):
         if self.pooling_type == 'use_sentence_transformer':
             return SentenceTransformer(self.model_name)
-        print(f'Use model {self.model_alias} on device: {self.device}')
-        args = {'torch_dtype': 'auto', 'trust_remote_code': True}
-        if self.device_map is not None:
-            args |= {'device_map': self.device_map, 'low_cpu_mem_usage': True}
+        print(f'Use model {self.model_alias} with {self.pooling_type} pooling on device: {self.device_map}')
+        args = {'torch_dtype': 'auto', 'trust_remote_code': True, 'device_map': self.device_map, 'low_cpu_mem_usage': True}
         model = AutoModel.from_pretrained(self.model_name, **args)
-        if self.device_map is None:
-            model = model.to(self.device)
         num_params = sum(p.numel() for n, p in model.named_parameters() if 'embedding' not in n)
-        num_params = f'{num_params/1e9:.2f}B' if num_params >= 1e9 else f'{num_params/1e6:.2f}M'
+        num_params = f'{num_params / 1e9:.2f}B' if num_params >= 1e9 else f'{num_params / 1e6:.2f}M'
         print(f'# params w/o embedding: {num_params}')
         return model
 
