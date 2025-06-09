@@ -42,6 +42,7 @@ class Searcher:
     normalize: bool = True
     query_template: Optional[str] = None
     candidate_template: Optional[str] = None
+    padding_side: Optional[str] = None
 
     reranker_name: str = None
 
@@ -99,7 +100,10 @@ class Searcher:
     @cached_property
     def tokenizer(self):
         assert self.model_name
-        return AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+        args = {'trust_remote_code': True}
+        if self.padding_side:
+            args['padding_side'] = self.padding_side
+        return AutoTokenizer.from_pretrained(self.model_name, **args)
 
     @cached_property
     def reranker(self):
@@ -537,8 +541,9 @@ class Evaluator:
     max_len: Optional[int]
     pooling_type: str
     normalize: bool
-    query_template: str
-    candidate_template: str
+    query_template: Optional[str]
+    candidate_template: Optional[str]
+    padding_side: Optional[str]
 
     is_colbert: bool = False
     use_simple_colbert_query: bool = False
@@ -560,12 +565,12 @@ class Evaluator:
 
         # Model-related
         if self.is_colbert:
-            self.searcher = ColbertSearcher(self.model_name, self.device_map, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
+            self.searcher = ColbertSearcher(self.model_name, self.device_map, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template, self.padding_side,
                                             use_simple_query=self.use_simple_colbert_query, use_colbert_linear=self.use_colbert_linear,
                                             save_dir=self.save_dir, dataset_name=self.dataset_name,
                                             batch_size=self.batch_size)
         else:
-            self.searcher = Searcher(self.model_name, self.device_map, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template,
+            self.searcher = Searcher(self.model_name, self.device_map, self.max_len, self.pooling_type, self.normalize, self.query_template, self.candidate_template, self.padding_side,
                                      reranker_name=self.reranker_name,
                                      save_dir=self.save_dir, dataset_name=self.dataset_name,
                                      batch_size=self.batch_size)
@@ -799,6 +804,8 @@ def main_parser():
     parser.add_argument('--query_template', type=str, help='Prompt template for query', default=None)
     parser.add_argument('--candidate_template', type=str, help='Prompt template for candidate', default=None)
 
+    parser.add_argument('--padding_side', type=str, help='Tokenizer padding side', default=None, choices=['left', 'right'])
+
     parser.add_argument('--is_colbert', help='Use colbert retrieval', action='store_true')
     parser.add_argument('--use_simple_colbert_query', help='Use simple query emb for colbert', action='store_true')
     parser.add_argument('--disable_colbert_linear', help='Disable linear layer for colbert', action='store_true')
@@ -827,7 +834,7 @@ def main():
     else:
         assert args.dataset and args.model
         evaluator = Evaluator('evaluation', args.dataset, args.gold_score, args.mode,
-                              args.model, args.device_map, args.max_len, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template,
+                              args.model, args.device_map, args.max_len, args.pooling, not args.disable_normalization, args.query_template, args.candidate_template, args.padding_side,
                               is_colbert=args.is_colbert, use_simple_colbert_query=args.use_simple_colbert_query, use_colbert_linear=not args.disable_colbert_linear,
                               query_threshold=args.threshold, topk=args.topk,
                               do_rerank=args.do_rerank, reranker_name=args.reranker_name, rerank_threshold=args.rerank_threshold, rerank_only_above=args.rerank_only_above,
